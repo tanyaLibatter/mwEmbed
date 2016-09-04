@@ -58,6 +58,7 @@
 		inSequence: false,
 		adDuration: null,
 		supportedPlugins: ['doubleClick', 'youbora', 'kAnalony', 'related', 'comScoreStreamingTag', 'watermark', 'heartbeat'],
+		unSupportedPlugins: ['multiDrm', 'chromecast', 'playlistAPI'],
 		chromeLib: null,
 
 		setup: function( embedPlayer ) {
@@ -66,42 +67,29 @@
 			this.isNativeSDK  = mw.getConfig( "EmbedPlayer.ForceNativeComponent");
 
 			if (!this.isNativeSDK) {
-				var loadScriptInFrame = function(){
-					kWidget.appendScriptUrl("https://www.gstatic.com/cv/js/sender/v1/cast_sender.js", function(){
-						_this.chromeLib = window.chrome;
-					});
-				}
-				if (mw.getConfig('EmbedPlayer.IsFriendlyIframe')){
-					try{
-						kWidget.appendScriptUrl("https://www.gstatic.com/cv/js/sender/v1/cast_sender.js", function(){
-							try{
-								_this.chromeLib = window.top.chrome;
-							}catch(e){
-								loadScriptInFrame();
-							}
-						}, top.document);
-					}catch(e){
-						loadScriptInFrame();
-					}
-				}else{
-					loadScriptInFrame();
-				}
 
-				var ticks = 0;
-				var intervalID = setInterval(function () {
-					ticks++;
-					if (_this.chromeLib !== null && typeof _this.chromeLib !== "undefined" && typeof _this.chromeLib.cast !== "undefined" && _this.chromeLib.cast.isAvailable) {
-						_this.initializeCastApi();
-						clearInterval(intervalID);
-					} else {
-						if (ticks === 40) { // cancel check after 10 seconds
-							clearInterval(intervalID);
-						}
-					}
-				}, 250);
+				this.loadCastLib().
+				then(function(){
+					_this.initializeCastApi();
+				});
 			}
 		},
 
+		loadCastLib: function(){
+			var deferred = $.Deferred();
+			var _this = this;
+			window.top["__onGCastApiAvailable"] = function(loaded, errorInfo) {
+				if (loaded) {
+					deferred.resolve();
+				} else {
+					deferred.reject(errorInfo);
+				}
+			};
+			kWidget.appendScriptUrl("//www.gstatic.com/cv/js/sender/v1/cast_sender.js", function () {
+				_this.chromeLib = window.top.chrome;
+			}, top.document);
+			return deferred;
+		},
 		addBindings: function() {
 			var _this = this;
 			this.bind('chromecastPlay', function(){_this.playMedia();});
@@ -250,35 +238,36 @@
 			if (this.isDisabled){
 				return false;
 			}
-			var _this = this;
-			if (!this.casting){
-				// launch app
-				this.showConnectingMessage();
-				this.embedPlayer.disablePlayControls(["chromecast"]);
-
-				this.chromeLib.cast.requestSession(
-					function(e){
-						_this.onRequestSessionSuccess(e);
-					},
-					function(error){
-						_this.onLaunchError(error);
-					}
-				);
-			}else{
-				// stop casting
-				this.stopMedia();
-				this.stopApp();
+			if (this.casting){
+				this.stopCasting();
+			} else {
+				this.launchApp();
 			}
 		},
-
+		stopCasting: function(){
+			this.stopMedia();
+			this.stopApp();
+		},
+		launchApp: function(){
+			var _this = this;
+			this.showConnectingMessage();
+			this.embedPlayer.disablePlayControls(["chromecast"]);
+			this.chromeLib.cast.requestSession(
+				this.onRequestSessionSuccess.bind(this),
+				this.onLaunchError.bind(this)
+			);
+		},
+		setRequestSessionSuccessUI: function(){
+			this.embedPlayer.layoutBuilder.closeAlert();
+			this.getComponent().css("color","#35BCDA");
+			this.updateTooltip(this.stopCastTitle);
+		},
 		onRequestSessionSuccess: function(e) {
 			if (!this.isNativeSDK){
 				this.log( "Session success: " + e.sessionId);
 				this.session = e;
 			}
-			this.embedPlayer.layoutBuilder.closeAlert();
-			this.getComponent().css("color","#35BCDA");
-			this.updateTooltip(this.stopCastTitle);
+			this.setRequestSessionSuccessUI();
 			this.casting = true;
 			this.embedPlayer.casting = true;
 			$( this.embedPlayer ).trigger( 'casting' );
@@ -293,18 +282,8 @@
 			if ( this.getConfig("receiverLogo") ){
 				this.sendMessage({'type': 'show', 'target': 'logo'});
 			}
-			if (this.embedPlayer.isLive()){
-				this.sendMessage({'type': 'live', 'value': true});
-			}
-
-			var licenseUrl = this.buildUdrmLicenseUri("application/dash+xml");
-			if (licenseUrl) {
-				this.sendMessage({'type': 'license', 'value': licenseUrl});
-				this.log("set license URL to: " + licenseUrl);
-			}
 			if (this.getConfig("useKalturaPlayer") === true){
-				var flashVars = this.getFlashVars();
-				this.sendMessage({'type': 'embed', 'lib': kWidget.getPath(), 'publisherID': this.embedPlayer.kwidgetid.substr(1), 'uiconfID': this.getConfig('uiconfid') || this.embedPlayer.kuiconfid, 'entryID': this.embedPlayer.kentryid, 'debugKalturaPlayer': this.getConfig("debugKalturaPlayer"), 'flashVars': flashVars});
+				this.loadMedia();
 				this.displayMessage(gM('mwe-chromecast-loading'));
 			} else {
 				this.sendMessage({'type': 'load'});
@@ -371,6 +350,11 @@
 					fv[plugin] = _this.embedPlayer.getKalturaConfig( plugin );
 				}
 			} );
+			this.unSupportedPlugins.forEach( function ( plugin ) {
+				if ( !$.isEmptyObject( _this.embedPlayer.getKalturaConfig( plugin ) ) ) {
+					fv[plugin] = {"plugin": false};
+				}
+			} );
 			// add support for custom proxyData for OTT app developers
 			var proxyData = this.getConfig( 'proxyData' );
 			if ( proxyData ) {
@@ -406,6 +390,8 @@
 				fv['scrubber'] = {plugin: true};
 				fv['largePlayBtn'] = {plugin: true};
 			}
+			//Always enable embedPlayerChromecastReceiver
+			fv["embedPlayerChromecastReceiver"] = {"plugin": true};
 			return fv;
 		},
 
@@ -416,36 +402,27 @@
 		},
 
 		initializeCastApi: function() {
-			var _this = this;
-
-			var autoJoinPolicyArray = [
-				this.chromeLib.cast.AutoJoinPolicy.PAGE_SCOPED,
-				this.chromeLib.cast.AutoJoinPolicy.TAB_AND_ORIGIN_SCOPED,
-				this.chromeLib.cast.AutoJoinPolicy.ORIGIN_SCOPED
-			];
-			var sessionRequest = new this.chromeLib.cast.SessionRequest(this.getConfig("applicationID").toString(), [this.chromeLib.cast.Capability.VIDEO_OUT], 60000);
-
-			var apiConfig = new this.chromeLib.cast.ApiConfig(sessionRequest,
-				function(event){
-					_this.sessionListener(event);
-				},
-				function(event){
-					_this.receiverListener(event);
-				},
-				autoJoinPolicyArray[1]
+			var sessionRequest = new this.chromeLib.cast.SessionRequest(
+				this.getConfig("applicationID").toString(),
+				[this.chromeLib.cast.Capability.VIDEO_OUT],
+				60000
 			);
-			this.chromeLib.cast.initialize(apiConfig,
-				function(){
-					_this.onInitSuccess();
-				},
-				function(){
-					_this.onError();
-				}
+
+			var apiConfig = new this.chromeLib.cast.ApiConfig(
+				sessionRequest,
+				this.sessionListener.bind(this),
+				this.receiverListener.bind(this),
+				this.chromeLib.cast.AutoJoinPolicy.TAB_AND_ORIGIN_SCOPED
+			);
+			this.chromeLib.cast.initialize(
+				apiConfig,
+				this.onInitSuccess.bind(this),
+				this.onError.bind(this)
 			);
 		},
 
 		sessionListener: function( e ) {
-			this.log("New session ID: ' + e.sessionId);");
+			this.log("New session ID: " + e.sessionId);
 			this.session = e;
 			if (this.session.media.length !== 0) {
 				this.log('Found ' + this.session.media.length + ' existing media sessions.');
@@ -541,6 +518,28 @@
 			}
 		},
 
+		receiverListener: function(e) {
+			if( e === this.chromeLib.cast.ReceiverAvailability.AVAILABLE ) {
+				this.log("receiver found");
+			}
+			else {
+				this.log("receiver list empty");
+			}
+		},
+
+		onInitSuccess: function() {
+			var _this = this;
+			this.log("init success");
+			this.show();
+			this.bind("layoutBuildDone ended", function(){
+				_this.show();
+			});
+		},
+
+		onError: function(e) {
+			console.log("Chromecast: Error. code: " + e.code + ", description: " + e.description);
+		},
+
 		playMedia: function() {
 			if( !this.currentMediaSession ) {
 				return;
@@ -599,33 +598,7 @@
 			return this.mediaCurrentTime;
 		},
 
-		buildUdrmLicenseUri: function(mimeType) {
-			var licenseServer = mw.getConfig('Kaltura.UdrmServerURL');
-			var licenseParams = this.getPlayer().mediaElement.getLicenseUriComponent();
-			var licenseUri = null;
 
-			if (licenseServer && licenseParams) {
-				// Build licenseUri by mimeType.
-				switch (mimeType) {
-					case "video/wvm":
-						// widevine classic
-						licenseUri = licenseServer + "/widevine/license?" + licenseParams;
-						break;
-					case "application/dash+xml":
-						// widevine modular, because we don't have any other dash DRM right now.
-						licenseUri = licenseServer + "/cenc/widevine/license?" + licenseParams;
-						break;
-					case "application/vnd.apple.mpegurl":
-						// fps
-						licenseUri = licenseServer + "/fps/license?" + licenseParams;
-						break;
-					default:
-						break;
-				}
-			}
-
-			return licenseUri;
-		},
 
 		setVolume: function(e, percent){
 			if( !this.currentMediaSession ) {
@@ -677,52 +650,67 @@
 			}
 		},
 
-		loadMedia: function(url, mime) {
+		loadMedia: function(mediaData) {
 			if (this.isNativeSDK){
 				$( this.embedPlayer ).trigger( 'loadReceiverMedia', [url, mime] );
 				return;
 			}
 			var _this = this;
-			if (!this.session || (!url && !this.embedPlayer.getSource())) {
+			if (!this.session) {
 				this.log("no session");
 				return;
 			}
 			this.savedPosition = 0;
 			// if URL and mime type were passed use it. If not - get the them from the embed player current source
-			var currentMediaURL = url || this.embedPlayer.getSource().src;
-			var mimeType = mime || this.embedPlayer.getSource().mimeType;
+			//var currentMediaURL = url || this.embedPlayer.getSource().src;
+			//var mimeType = mime || this.embedPlayer.getSource().mimeType;
 
-			this.embedPlayer.resolveSrcURL( currentMediaURL ).then(
-				function(source){
-					return source;
-				},
-				function () { //error
-					return currentMediaURL;
-				})
-				.then( function(currentMediaURL ){
-						_this.log("loading..." + currentMediaURL);
-						var mediaInfo = new _this.chromeLib.cast.media.MediaInfo( currentMediaURL );
-						mediaInfo.contentType = mimeType;
-						_this.request = new _this.chromeLib.cast.media.LoadRequest( mediaInfo );
-						_this.request.autoplay = true;
-						_this.request.currentTime = 0;
+			//this.embedPlayer.resolveSrcURL( currentMediaURL ).then(
+			//	function(source){
+			//		return source;
+			//	},
+			//	function () { //error
+			//		return currentMediaURL;
+			//	})
+			//	.then( function(currentMediaURL ){
+			//			_this.log("loading..." + currentMediaURL);
 
-						var payload = {
-							"title:" : $(".titleLabel").html(),
-							"thumb" : _this.embedPlayer.poster
-						};
+			var mediaInfo = new _this.chromeLib.cast.media.MediaInfo(this.embedPlayer.kentryid, "NA");
+			//mediaInfo.contentType = mimeType;
 
-						var json = {
-							"payload" : payload
-						};
 
-						_this.request.customData = json;
+			mediaInfo.duration = this.embedPlayer.getDuration();
+			mediaInfo.streamType = this.embedPlayer.isLive() ? this.chromeLib.cast.media.StreamType.LIVE : this.chromeLib.cast.media.StreamType.BUFFERED;
 
-						_this.session.loadMedia(_this.request,
-							_this.onMediaDiscovered.bind(_this, 'loadMedia'),
-							_this.onMediaError
-						);
-				});
+			mediaInfo.customData = {
+				'lib': kWidget.getPath(),
+				'publisherID': this.embedPlayer.kwidgetid.substr(1),
+				'uiconfID': this.getConfig('uiconfid') || this.embedPlayer.kuiconfid,
+				'entryID': this.embedPlayer.kentryid,
+				'debugKalturaPlayer': this.getConfig("debugKalturaPlayer"),
+				'flashVars': this.getFlashVars()
+			};
+
+			_this.request = new _this.chromeLib.cast.media.LoadRequest(mediaInfo);
+			_this.request.autoplay = true;
+			_this.request.currentTime = 0;
+
+			var payload = {
+				"title:": $(".titleLabel").html(),
+				"thumb": _this.embedPlayer.poster
+			};
+
+			var json = {
+				"payload": payload
+			};
+
+			_this.request.customData = json;
+
+			_this.session.loadMedia(_this.request,
+				_this.onMediaDiscovered.bind(_this, 'loadMedia'),
+				_this.onMediaError
+			);
+			//});
 		},
 
 		stopMedia: function() {
@@ -804,28 +792,6 @@
 		onMediaError: function(e) {
 			this.embedPlayer.layoutBuilder.closeAlert();
 			console.log("Chromecast: media error: "+ e.code);
-		},
-
-		receiverListener: function(e) {
-			if( e === 'available' ) {
-				this.log("receiver found");
-			}
-			else {
-				this.log("receiver list empty");
-			}
-		},
-
-		onInitSuccess: function() {
-			var _this = this;
-			this.log("init success");
-			this.show();
-			this.bind("layoutBuildDone ended", function(){
-				_this.show();
-			});
-		},
-
-		onError: function(e) {
-			console.log("Chromecast: Error. code: " + e.code + ", description: " + e.description);
 		},
 
 		getChromecastSource: function(){

@@ -19,6 +19,7 @@
 			'volumeControl' : true,
 			'overlays': true
 		},
+		mediaPlayer: null,
 		seeking: false,
 		triggerReplayEvent: false, // since native replay is not supported in the Receiver, we use this flag to send a replay event to Analytics
 		currentTime: 0,
@@ -49,18 +50,25 @@
 
 		setup: function( readyCallback ) {
 			$(this).trigger("chromecastReceiverLoaded");
-			$(this).bind('layoutBuildDone', function(){
-				this.getVideoHolder().find('video').remove();
-			});
-			this.setPlayerElement(parent.document.getElementById('receiverVideoElement'));
+			this.getPlayerElement().preload = "auto";
+			this.getPlayerElement().setAttribute("preload", "auto")
 			this.addBindings();
-			readyCallback();
+			this.applyMediaElementBindings();
+			var _this = this;
+			$.getScript("//www.gstatic.com/cast/sdk/libs/mediaplayer/1.0.0/media_player.js").
+				then(function(){
+					debugger;
+				_this.loadPlayer();
+				readyCallback();
+
+			});
 		},
 		/**
 		 * Apply player bindings for getting events from mpl.js
 		 */
 		addBindings: function(){
 			var _this = this;
+			this.bindHelper("loadPlayer", this.loadPlayer.bind(this));
 			this.bindHelper("layoutBuildDone", function(){
 				_this.getVideoHolder().css("backgroundColor","transparent");
 				$("body").css("backgroundColor","transparent");
@@ -68,10 +76,10 @@
 			});
 			this.bindHelper("loadstart", function(){
 
-				_this.applyMediaElementBindings();
-				mw.log('EmbedPlayerChromecastReceiver:: Setup. Video element: '+_this.getPlayerElement().toString());
-				_this._propagateEvents = true;
-				$(_this.getPlayerElement()).css('position', 'absolute');
+				//_this.applyMediaElementBindings();
+				//mw.log('EmbedPlayerChromecastReceiver:: Setup. Video element: '+_this.getPlayerElement().attr("id").toString());
+				//_this._propagateEvents = true;
+				//$(_this.getPlayerElement()).css('position', 'absolute');
 				_this.stopped = false;
 			});
 			this.bindHelper("replay", function(){
@@ -97,6 +105,122 @@
 				$(parent.document.getElementById('captionsOverlay')).empty();
 			});
 		},
+		loadPlayer: function(e, data){
+			debugger;
+
+			if (this.mediaPlayer !== null) {
+				this.mediaPlayer.unload(); // Ensure unload before loading again
+			}
+
+			this.mediaHost = new cast.player.api.Host({
+				'mediaElement': this.getPlayerElement(),
+				'url': this.getSrc()
+			});
+
+			//if (manifestCredentials) {
+			//	mediaHost.updateManifestRequestInfo = function (requestInfo) {
+			//		// example of setting CORS withCredentials
+			//		if (!requestInfo.url) {
+			//			requestInfo.url = url;
+			//		}
+			//		requestInfo.withCredentials = true;
+			//	};
+			//}
+			//if (segmentCredentials) {
+			//	mediaHost.updateSegmentRequestInfo = function (requestInfo) {
+			//		// example of setting CORS withCredentials
+			//		requestInfo.withCredentials = true;
+			//		// example of setting headers
+			//		//requestInfo.headers = {};
+			//		//requestInfo.headers['content-type'] = 'text/xml;charset=utf-8';
+			//	};
+			//}
+			//if (licenseCredentials) {
+			//	mediaHost.updateLicenseRequestInfo = function (requestInfo) {
+			//		// example of setting CORS withCredentials
+			//		requestInfo.withCredentials = true;
+			//	};
+			//}
+			//
+
+
+			//if ((videoQualityIndex != -1 && streamVideoBitrates &&
+			//	videoQualityIndex < streamVideoBitrates.length) ||
+			//	(audioQualityIndex != -1 && streamAudioBitrates &&
+			//	audioQualityIndex < streamAudioBitrates.length)) {
+			//	mediaHost['getQualityLevelOrig'] = mediaHost.getQualityLevel;
+			//	mediaHost.getQualityLevel = function (streamIndex, qualityLevel) {
+			//		if (streamIndex == videoStreamIndex && videoQualityIndex != -1) {
+			//			return videoQualityIndex;
+			//		} else if (streamIndex == audioStreamIndex &&
+			//			audioQualityIndex != -1) {
+			//			return audioQualityIndex;
+			//		} else {
+			//			return qualityLevel;
+			//		}
+			//	};
+			//}
+
+			this.mediaHost.onError = function (errorCode, requestStatus) {
+				this.log('### HOST ERROR - Fatal Error: code = ' + errorCode);
+				if (this.mediaPlayer !== null) {
+					this.mediaPlayer.unload();
+				}
+			};
+
+			this.protocol = null;
+			var mimeType = this.getSource().getMIMEType();
+
+			this.mediaHost.licenseUrl = this.buildUdrmLicenseUri(mimeType);
+
+			switch(mimeType){
+				case "application/vnd.apple.mpegurl":
+					this.protocol = cast.player.api.CreateHlsStreamingProtocol(this.mediaHost);
+					break;
+				case "application/dash+xml":
+					this.protocol = cast.player.api.CreateDashStreamingProtocol(this.mediaHost);
+					break;
+				case "video/playreadySmooth":
+					this.protocol = cast.player.api.CreateSmoothStreamingProtocol(this.mediaHost);
+					break;
+			}
+
+			// Advanced Playback - HLS, MPEG DASH, SMOOTH STREAMING
+			// Player registers to listen to the media element events through the
+			// mediaHost property of the  mediaElement
+
+			this.mediaPlayer = new cast.player.api.Player(this.mediaHost);
+			var startTimeDuration = this.startTime;
+			var initialTimeIndexSeconds = this.isLive() ? Infinity : startTimeDuration;
+			this.mediaPlayer.load(this.protocol, initialTimeIndexSeconds);
+		},
+		buildUdrmLicenseUri: function(mimeType) {
+			var licenseServer = mw.getConfig('Kaltura.UdrmServerURL');
+			var licenseParams = this.mediaElement.getLicenseUriComponent();
+			var licenseUri = null;
+
+			if (licenseServer && licenseParams) {
+				// Build licenseUri by mimeType.
+				switch (mimeType) {
+					case "video/wvm":
+						// widevine classic
+						licenseUri = licenseServer + "/widevine/license?" + licenseParams;
+						break;
+					case "application/dash+xml":
+						// widevine modular, because we don't have any other dash DRM right now.
+						licenseUri = licenseServer + "/cenc/widevine/license?" + licenseParams;
+						break;
+					case "application/vnd.apple.mpegurl":
+						// fps
+						licenseUri = licenseServer + "/fps/license?" + licenseParams;
+						break;
+					default:
+						break;
+				}
+			}
+
+			return licenseUri;
+		},
 		/**
 		 * Apply media element bindings
 		 */
@@ -111,6 +235,7 @@
 			$.each(_this.nativeEvents, function (inx, eventName) {
 				$(vid).unbind(eventName + _this.bindPostfix).bind(eventName + _this.bindPostfix, function () {
 					// make sure we propagating events, and the current instance is in the correct closure.
+					console.info(eventName);
 					if (_this._propagateEvents && _this.instanceOf == 'ChromecastReceiver') {
 						var argArray = $.makeArray(arguments);
 						// Check if there is local handler:
@@ -204,6 +329,9 @@
 			this.playerElement = mediaElement;
 		},
 		getPlayerElement: function () {
+			if (!this.playerElement) {
+				this.playerElement = $('#' + this.pid).get(0);
+			}
 			return this.playerElement;
 		},
 

@@ -1,5 +1,4 @@
 var senders = {};  // a list of Chrome senders
-var liveStreaming = false;  // a flag to indicate live streaming or not
 var maxBW = null;  // maximum bandwidth
 var videoStreamIndex = -1;  // index for video stream
 var audioStreamIndex = -1;  // index for audio stream
@@ -21,8 +20,9 @@ var mediaProtocol = null;  // an instance of cast.player.api.Protocol
 var mediaPlayer = null;  // an instance of cast.player.api.Player
 var playerInitialized = false;
 var isInSequence = false;
-var debugMode = false;
+var debugMode = true;
 var kdp;
+
 
 onload = function () {
 	if (debugMode){
@@ -32,14 +32,17 @@ onload = function () {
 
 	mediaElement = document.getElementById('receiverVideoElement');
 	mediaElement.autoplay = true;
-	setMediaElementEvents(mediaElement);
-	mediaManager = new cast.receiver.MediaManager(mediaElement);
 
+	//setMediaElementEvents(mediaElement);
+	mediaManager = new cast.receiver.MediaManager(mediaElement);
+	setMediaManagerEvents();
 	castReceiverManager = cast.receiver.CastReceiverManager.getInstance();
 	messageBus = castReceiverManager.getCastMessageBus('urn:x-cast:com.kaltura.cast.player');
 
 	setCastReceiverManagerEvents();
-	initApp();
+	setTimeout(function(){
+		initApp();
+	},5000);
 
 	messageBus.onMessage = function (event) {
 		console.log('### Message Bus - Media Message: ' + JSON.stringify(event));
@@ -80,15 +83,6 @@ onload = function () {
 		} else if (payload['type'] === 'TTML') {
 			mediaPlayer.enableCaptions(false);
 			mediaPlayer.enableCaptions(true, 'ttml', 'captions.ttml');
-		} else if (payload['type'] === 'live') {
-			if (mediaManager){
-				mediaManager.onGetStatus(event);
-			}
-			if (payload['value'] === true) {
-				liveStreaming = true;
-			} else {
-				liveStreaming = false;
-			}
 		} else if (payload['type'] === 'maxBW') {
 			maxBW = payload['value'];
 		} else if (payload['type'] === 'license') {
@@ -122,81 +116,6 @@ onload = function () {
 			document.getElementById('logo').style.backgroundImage = "url(" + payload['logo'] + ")";
 		} else if (payload['type'] === 'changeMedia') {
 			kdp.sendNotification('changeMedia', {"entryId": payload['entryId']});
-		} else if (payload['type'] === 'embed') {
-			if (!playerInitialized) {
-				var playerLib = payload['lib'] + "mwEmbedLoader.php";
-				var s = document.createElement("script");
-				s.type = "text/javascript";
-				s.src = playerLib;
-				document.head.appendChild(s);
-
-				var intervalID = setInterval(function () {
-					if (typeof mw !== "undefined") {
-						clearInterval(intervalID);
-						var publisherID = payload['publisherID'];
-						var uiconfID = payload['uiconfID'];
-						var entryID = payload['entryID'];
-						mw.setConfig("EmbedPlayer.HidePosterOnStart", true);
-						if (payload['debugKalturaPlayer'] == true) {
-							mw.setConfig("debug", true);
-							mw.setConfig("debugTarget", "kdebug");
-							//mw.setConfig("debugFilter", "---");
-							mw.setConfig("autoScrollDebugTarget", true);
-							document.getElementById('kdebug').style.display = 'block';
-						}
-						mw.setConfig("chromecastReceiver", true);
-						mw.setConfig("Kaltura.ExcludedModules", "chromecast");
-						var fv = {
-							"multiDrm": {
-								'plugin': false
-							},
-							"embedPlayerChromecastReceiver": {
-								'plugin': true
-							},
-							"chromecast": {
-								'plugin': false
-							},
-							"playlistAPI":{
-								'plugin': false
-							}
-						};
-						fv = extend(fv, payload['flashVars']);
-						var mimeType = null;
-						var src = null;
-
-						kWidget.embed({
-							"targetId": "kaltura_player",
-							"wid": "_" + publisherID,
-							"uiconf_id": uiconfID,
-							"readyCallback": function (playerId) {
-								if (!playerInitialized) {
-									playerInitialized = true;
-									kdp = document.getElementById(playerId);
-									kdp.kBind("broadcastToSender", function (msg) {
-										messageBus.broadcast(msg);
-										isInSequence = ( msg == "chromecastReceiverAdOpen" );
-									});
-									kdp.kBind("chromecastReceiverLoaded", function () {
-										setMediaManagerEvents();
-									});
-									kdp.kBind("SourceSelected", function (source) {
-										mimeType = source.mimeType;
-										src = source.src;
-									});
-									kdp.kBind("widgetLoaded layoutReady", function () {
-										var msg = "readyForMedia";
-										msg = msg + "|" + src + "|" + mimeType;
-										messageBus.broadcast(msg);
-									});
-								}
-							},
-							"flashvars": fv,
-							"cache_st": 1438601385,
-							"entry_id": entryID
-						});
-					}
-				}, 100);
-			}
 		} else {
 			licenseUrl = null;
 		}
@@ -434,122 +353,67 @@ function setMediaManagerEvents() {
 	 * @param {Object} event
 	 */
 	mediaManager.onLoad = function (event) {
+		var embedInfo = event.data.media.customData;
 		messageBus.broadcast("mediaManager.onLoad");
 		console.log('### Media Manager - LOAD: ' + JSON.stringify(event));
 		setDebugMessage('mediaManagerMessage', 'LOAD ' + JSON.stringify(event));
 
-		if (mediaPlayer !== null) {
-			mediaPlayer.unload(); // Ensure unload before loading again
-		}
 
-		if (event.data['media'] && event.data['media']['contentId']) {
-			var url = event.data['media']['contentId'];
+		if (!playerInitialized) {
 
-			setDebugMessage('mediaPlayerState', '-');
 
-			mediaHost = new cast.player.api.Host({
-				'mediaElement': mediaElement,
-				'url': url
-			});
+			var playerLib = embedInfo["lib"] + "mwEmbedLoader.php";
+			var s = document.createElement("script");
+			s.type = "text/javascript";
+			s.src = playerLib;
+			document.head.appendChild(s);
 
-			if (manifestCredentials) {
-				mediaHost.updateManifestRequestInfo = function (requestInfo) {
-					// example of setting CORS withCredentials
-					if (!requestInfo.url) {
-						requestInfo.url = url;
+			var intervalID = setInterval(function () {
+				if (typeof mw !== "undefined") {
+					clearInterval(intervalID);
+					mw.setConfig("EmbedPlayer.HidePosterOnStart", true);
+					if (embedInfo['debugKalturaPlayer'] == true) {
+						mw.setConfig("debug", true);
+						mw.setConfig("debugTarget", "kdebug");
+						//mw.setConfig("debugFilter", "---");
+						mw.setConfig("autoScrollDebugTarget", true);
+						document.getElementById('kdebug').style.display = 'block';
 					}
-					requestInfo.withCredentials = true;
-				};
-			}
-			if (segmentCredentials) {
-				mediaHost.updateSegmentRequestInfo = function (requestInfo) {
-					// example of setting CORS withCredentials
-					requestInfo.withCredentials = true;
-					// example of setting headers
-					//requestInfo.headers = {};
-					//requestInfo.headers['content-type'] = 'text/xml;charset=utf-8';
-				};
-			}
-			if (licenseCredentials) {
-				mediaHost.updateLicenseRequestInfo = function (requestInfo) {
-					// example of setting CORS withCredentials
-					requestInfo.withCredentials = true;
-				};
-			}
+					mw.setConfig("chromecastReceiver", true);
+					mw.setConfig("Kaltura.ExcludedModules", "chromecast");
 
-			if (licenseUrl) {
-				mediaHost.licenseUrl = licenseUrl;
-			}
+					kWidget.embed({
+						"targetId": "kaltura_player",
+						"wid": "_" + embedInfo['publisherID'],
+						"uiconf_id": embedInfo['uiconfID'],
+						"readyCallback": function (playerId) {
+							if (!playerInitialized) {
+								playerInitialized = true;
+								kdp = document.getElementById(playerId);
+								$("#receiverVideoElement").remove();
+								mediaElement = $(kdp).contents().contents().find("video")[0];
+								mediaManager.setMediaElement(mediaElement);
+								messageBus.broadcast("mediaHostState: success");
+								setDebugMessage('mediaHostState', 'success');
 
-//			if (customData) {
-//				mediaHost.licenseCustomData = customData;
-//				console.log('### customData: ' + customData);
-//			}
-
-			if ((videoQualityIndex != -1 && streamVideoBitrates &&
-				videoQualityIndex < streamVideoBitrates.length) ||
-				(audioQualityIndex != -1 && streamAudioBitrates &&
-					audioQualityIndex < streamAudioBitrates.length)) {
-				mediaHost['getQualityLevelOrig'] = mediaHost.getQualityLevel;
-				mediaHost.getQualityLevel = function (streamIndex, qualityLevel) {
-					if (streamIndex == videoStreamIndex && videoQualityIndex != -1) {
-						return videoQualityIndex;
-					} else if (streamIndex == audioStreamIndex &&
-						audioQualityIndex != -1) {
-						return audioQualityIndex;
-					} else {
-						return qualityLevel;
-					}
-				};
-			}
-
-			mediaHost.onError = function (errorCode, requestStatus) {
-				messageBus.broadcast("mediaHostState: Fatal Error: code = " + errorCode);
-				console.error('### HOST ERROR - Fatal Error: code = ' + errorCode);
-				setDebugMessage('mediaHostState', 'Fatal Error: code = ' + errorCode);
-				if (mediaPlayer !== null) {
-					mediaPlayer.unload();
+								kdp.kBind("broadcastToSender", function (msg) {
+									messageBus.broadcast(msg);
+									isInSequence = ( msg == "chromecastReceiverAdOpen" );
+								});
+							}
+						},
+						"flashvars": embedInfo['flashVars'],
+						"entry_id": embedInfo['entryID']
+					});
 				}
-			};
-
-			var initialTimeIndexSeconds = event.data['media']['currentTime'] || 0;
-			protocol = null;
-			var ext = null;
-			if (url.lastIndexOf('.m3u8') >= 0) {
-				protocol = cast.player.api.CreateHlsStreamingProtocol(mediaHost);
-				ext = 'HLS';
-			} else if (url.lastIndexOf('.mpd') >= 0) {
-				protocol = cast.player.api.CreateDashStreamingProtocol(mediaHost);
-				ext = 'MPEG-DASH';
-			} else if (url.lastIndexOf('.ism/') >= 0 ||
-				url.lastIndexOf('.isml/') >= 0) {
-				protocol = cast.player.api.CreateSmoothStreamingProtocol(mediaHost);
-				ext = 'Smooth Streaming';
-			}
-			console.log('### Media Protocol Identified as ' + ext);
-			setDebugMessage('mediaProtocol', ext);
-
-
-			if (protocol === null) {
-				// Call on original handler
-				mediaManager['onLoadOrig'](event); // Call on the original callback
-			} else {
-				// Advanced Playback - HLS, MPEG DASH, SMOOTH STREAMING
-				// Player registers to listen to the media element events through the
-				// mediaHost property of the  mediaElement
-				mediaPlayer = new cast.player.api.Player(mediaHost);
-				if (liveStreaming) {
-					mediaPlayer.load(protocol, Infinity);
-				}
-				else {
-					mediaPlayer.load(protocol, initialTimeIndexSeconds);
-				}
-			}
-			messageBus.broadcast("mediaHostState: success");
-			setDebugMessage('mediaHostState', 'success');
+			}, 100);
 		}
+		//if (event.data['media'] && event.data['media']['contentId']) {
+		//	initPlayer(event);
+		//}
 	};
 }
+
 function initApp() {
 	console.log('### Application Loaded. Starting system.');
 	setDebugMessage('applicationState', 'Loaded. Starting up.');
@@ -872,37 +736,4 @@ function getPlayerState() {
 		var playerState = mediaPlayer.getState();
 		setDebugMessage('mediaPlayerState', 'underflow: ' + playerState['underflow']);
 	}
-}
-function extend(a, b){
-	for(var key in b)
-		if(b.hasOwnProperty(key))
-			a[key] = b[key];
-	return a;
-}
-/*
- * get DOM element css properties
- */
-function getCss(dom){
-	var style;
-	var returns = {};
-	if(window.getComputedStyle){
-		var camelize = function(a,b){
-			return b.toUpperCase();
-		};
-		style = window.getComputedStyle(dom, null);
-		for(var i = 0, l = style.length; i < l; i++){
-			var prop = style[i];
-			var camel = prop.replace(/\-([a-z])/g, camelize);
-			var val = style.getPropertyValue(prop);
-			returns[camel] = val;
-		};
-		return returns;
-	};
-	if(style = dom.currentStyle){
-		for(var prop in style){
-			returns[prop] = style[prop];
-		};
-		return returns;
-	};
-	return this.css();
 }
