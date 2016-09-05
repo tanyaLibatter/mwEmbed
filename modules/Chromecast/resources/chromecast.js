@@ -58,7 +58,7 @@
 		inSequence: false,
 		adDuration: null,
 		supportedPlugins: ['doubleClick', 'youbora', 'kAnalony', 'related', 'comScoreStreamingTag', 'watermark', 'heartbeat'],
-		unSupportedPlugins: ['multiDrm', 'chromecast', 'playlistAPI'],
+		unSupportedPlugins: ['multiDrm', 'dash', 'chromecast', 'playlistAPI'],
 		chromeLib: null,
 
 		setup: function( embedPlayer ) {
@@ -75,6 +75,8 @@
 			}
 		},
 
+		//Initialization
+
 		loadCastLib: function(){
 			var deferred = $.Deferred();
 			var _this = this;
@@ -90,6 +92,147 @@
 			}, top.document);
 			return deferred;
 		},
+
+		initializeCastApi: function() {
+			var sessionRequest = new this.chromeLib.cast.SessionRequest(
+				this.getConfig("applicationID").toString(),
+				[this.chromeLib.cast.Capability.VIDEO_OUT],
+				60000
+			);
+
+			var apiConfig = new this.chromeLib.cast.ApiConfig(
+				sessionRequest,
+				this.sessionListener.bind(this),
+				this.receiverListener.bind(this),
+				this.chromeLib.cast.AutoJoinPolicy.TAB_AND_ORIGIN_SCOPED
+			);
+			this.chromeLib.cast.initialize(
+				apiConfig,
+				this.onInitSuccess.bind(this),
+				this.onError.bind(this)
+			);
+		},
+
+		sessionListener: function( e ) {
+			this.log("New session ID: " + e.sessionId);
+			this.session = e;
+			if (this.session.media.length !== 0) {
+				this.log('Found ' + this.session.media.length + ' existing media sessions.');
+				this.onMediaDiscovered('onRequestSessionSuccess_', this.session.media[0]);
+			}else{
+				this.onRequestSessionSuccess(e);
+			}
+			this.session.addMediaListener(
+				this.onMediaDiscovered.bind(this, 'addMediaListener'));
+			this.session.addUpdateListener(this.sessionUpdateListener.bind(this));
+		},
+
+		receiverListener: function(e) {
+			if( e === this.chromeLib.cast.ReceiverAvailability.AVAILABLE ) {
+				this.log("receiver found");
+			}
+			else {
+				this.log("receiver list empty");
+			}
+		},
+
+		onInitSuccess: function() {
+			var _this = this;
+			this.log("init success");
+			this.show();
+			this.bind("layoutBuildDone ended", function(){
+				_this.show();
+			});
+		},
+
+		onError: function(e) {
+			console.log("Chromecast: Error. code: " + e.code + ", description: " + e.description);
+		},
+
+		onMediaDiscovered: function(how, mediaSession) {
+			var _this = this;
+			this.embedPlayer.layoutBuilder.closeAlert();
+			this.inSequence = false;
+			// if page reloaded and in playlist - select the currently playing clip
+			if ( how === 'onRequestSessionSuccess_' && this.embedPlayer.playlist){
+				this.stopApp();
+				// TODO: handle playlist reload
+				return;
+//				var castedManifest = mediaSession.media.contentId;
+//				var castedMedia = castedManifest.substr(castedManifest.indexOf("/entryId/")+9,10);
+//				var currentManifest = this.embedPlayer.getSource().src;
+//				var currentMedia = currentManifest.substr(currentManifest.indexOf("/entryId/")+9,10);
+//				if (castedMedia !== currentMedia){
+//					setTimeout(function(){
+//						_this.casting = true;
+//						_this.embedPlayer.casting = true;
+//						_this.embedPlayer.sendNotification("playlistPlayMediaById",castedMedia);
+//					},0);
+//
+//				}
+			}
+			this.log("new media session ID:" + mediaSession.mediaSessionId + ' (' + how + ')');
+			this.currentMediaSession = mediaSession;
+			this.getComponent().css("color","#35BCDA");
+			this.updateTooltip(this.stopCastTitle);
+			mediaSession.addUpdateListener(function(e){_this.onMediaStatusUpdate(e);});
+			this.mediaCurrentTime = this.currentMediaSession.currentTime;
+			this.mediaDuration = this.currentMediaSession.media.duration;
+
+			// switch to Chromecast player
+			var chromeCastSource = this.getChromecastSource();
+			if (chromeCastSource){
+				// save player, current volume and current position
+				if (this.savedPlayer === null){
+					this.embedPlayer.pause(); // pause the current player if playing
+					this.savedPlayer = this.embedPlayer.selectedPlayer;
+				}
+				// we want to save the position only if we are no in an ad
+				if ((_this.embedPlayer.sequenceProxy && _this.embedPlayer.sequenceProxy.isInSequence) !== true){
+					this.savedPosition = this.embedPlayer.currentTime;
+				}
+				this.savedVolume = this.embedPlayer.volume;
+				// select Chromecast player
+				this.embedPlayer.selectPlayer(
+					mw.EmbedTypes.mediaPlayers.getPlayerById('chromecast')
+				);
+				this.embedPlayer.disablePlayer();
+				this.embedPlayer.updatePlaybackInterface(function(){
+					_this.embedPlayer.mediaElement.setSource(chromeCastSource);
+					_this.embedPlayer.receiverName = _this.session.receiver.friendlyName;
+					// set volume and position according to the video settings before switching players
+					_this.setVolume(null, _this.savedVolume);
+					if (_this.currentMediaSession.media.duration && _this.savedPosition > 0 && !_this.embedPlayer.changeMediaStarted){
+						_this.sendMessage({'type': 'notification','event': 'firstPlay', 'data': null});
+						_this.seekMedia(_this.savedPosition / _this.currentMediaSession.media.duration * 100);
+					}
+					// update media duration for durationLable component
+					_this.embedPlayer.mediaLoaded(_this.currentMediaSession);
+					if (_this.autoPlay){
+						_this.embedPlayer.play();
+					}
+					_this.updateScreen();
+					// hide kaltura logo
+					if ( _this.getConfig("receiverLogo") ){
+						_this.sendMessage({'type': 'hide', 'target': 'logo'});
+					}
+					if (_this.replay){
+						_this.replay = false;
+						_this.sendMessage({'type': 'notification','event': 'replay'});  // since we reload the media for replay, trigger playerReady on the receiver player to reset Analytics
+						_this.embedPlayer.play();
+					}
+
+					if (_this.monitorInterval !== null){
+						clearInterval(_this.monitorInterval);
+					}
+					_this.monitorInterval = setInterval(function(){
+						_this.monitor();
+					}, mw.getConfig('EmbedPlayer.MonitorRate'));
+				});
+			}
+		},
+
+		//Misc
 		addBindings: function() {
 			var _this = this;
 			this.bind('chromecastPlay', function(){_this.playMedia();});
@@ -234,6 +377,7 @@
 			);
 		},
 
+		//Initiliza Cast
 		toggleCast : function(){
 			if (this.isDisabled){
 				return false;
@@ -244,10 +388,12 @@
 				this.launchApp();
 			}
 		},
+
 		stopCasting: function(){
 			this.stopMedia();
 			this.stopApp();
 		},
+
 		launchApp: function(){
 			var _this = this;
 			this.showConnectingMessage();
@@ -257,11 +403,83 @@
 				this.onLaunchError.bind(this)
 			);
 		},
-		setRequestSessionSuccessUI: function(){
-			this.embedPlayer.layoutBuilder.closeAlert();
-			this.getComponent().css("color","#35BCDA");
-			this.updateTooltip(this.stopCastTitle);
+
+		stopMedia: function() {
+			if( !this.currentMediaSession ) {
+				return;
+			}
+
+			this.currentMediaSession.stop(null,
+				this.mediaCommandSuccessCallback.bind(this,
+					"stopped " + this.currentMediaSession.sessionId
+				),
+				this.onError
+			);
+			this.updateTooltip(this.startCastTitle);
+			this.log("media stopped");
 		},
+
+		stopApp: function() {
+			if (!this.casting){
+				return;
+			}
+			clearInterval(this.monitorInterval);
+			var _this = this;
+			this.getComponent().css("color","white");
+			this.updateTooltip(this.startCastTitle);
+			this.casting = false;
+			this.embedPlayer.casting = false;
+			this.embedPlayer.getInterface().find(".chromecastScreen").remove();
+			if (this.isNativeSDK){
+				return;
+			}
+			var seekTime = this.getCurrentTime();
+			// stop casting
+			this.session.stop(this.onStopAppSuccess, this.onError);
+			// restore native player
+			if (this.savedPlayer){
+				this.embedPlayer.selectPlayer(this.savedPlayer);
+				this.savedPlayer = null;
+			}
+			this.embedPlayer.disablePlayer();
+			this.embedPlayer.updatePlaybackInterface();
+			this.embedPlayer.enablePlayControls();
+			if (this.embedPlayer.playlist){
+				mw.setConfig("EmbedPlayer.KeepPoster",false);
+				mw.setConfig('EmbedPlayer.HidePosterOnStart', true);
+			}
+			if (this.embedPlayer.isLive()){
+				this.embedPlayer.pause();
+				setTimeout(function(){
+					_this.embedPlayer.setLiveOffSynch(false);
+					_this.embedPlayer.triggerHelper("movingBackToLive");
+					_this.embedPlayer.play();
+				},1000);
+			}else{
+				if ( this.embedPlayer.selectedPlayer.library == "Kplayer" ){
+					// since we don't have the canSeek promise, we need to reload the media on playerReady, wait for it to load and then preform the seek operation. Add a timeout as seek is not always available on the mediaLoaded event
+					this.bind("playerReady.stopCast", function(){
+						_this.unbind("playerReady.stopCast");
+						_this.bind("mediaLoaded.stopCast", function(){
+							_this.unbind("mediaLoaded.stopCast");
+							setTimeout(function(){
+								_this.embedPlayer.seek(seekTime, false);
+							},1000);
+						});
+						_this.embedPlayer.load();
+					})
+				}else{
+					this.embedPlayer.canSeek().then(function () {
+						_this.embedPlayer.seek(seekTime, false);
+					});
+				}
+			}
+		},
+
+		onStopAppSuccess: function() {
+			console.log("Chromecast: Session stopped");
+		},
+
 		onRequestSessionSuccess: function(e) {
 			if (!this.isNativeSDK){
 				this.log( "Session success: " + e.sessionId);
@@ -299,6 +517,19 @@
 				_this.parseMessage(message);
 			});
 		},
+
+		onLaunchError: function(error) {
+			this.embedPlayer.layoutBuilder.closeAlert();
+			this.embedPlayer.enablePlayControls();
+			this.log("launch error: "+error.code);
+		},
+
+		setRequestSessionSuccessUI: function(){
+			this.embedPlayer.layoutBuilder.closeAlert();
+			this.getComponent().css("color","#35BCDA");
+			this.updateTooltip(this.stopCastTitle);
+		},
+
 		parseMessage: function(message){
 			if ( message.indexOf("{") === 0 ){
 				try{
@@ -311,13 +542,6 @@
 				}
 			}else{
 				switch (message.split('|')[0]){
-					case "readyForMedia":
-						if ( this.getConfig("useReceiverSource") && message.split('|').length > 1){ // we got source and mime type as selected by the player running on the receiver
-							this.loadMedia(message.split('|')[1], message.split('|')[2]);
-						}else{
-							this.loadMedia();
-						}
-						break;
 					case "shutdown":
 						this.stopApp(); // receiver was shut down by the browser Chromecast icon - stop the app
 						break;
@@ -395,151 +619,6 @@
 			return fv;
 		},
 
-		onLaunchError: function(error) {
-			this.embedPlayer.layoutBuilder.closeAlert();
-			this.embedPlayer.enablePlayControls();
-			this.log("launch error: "+error.code);
-		},
-
-		initializeCastApi: function() {
-			var sessionRequest = new this.chromeLib.cast.SessionRequest(
-				this.getConfig("applicationID").toString(),
-				[this.chromeLib.cast.Capability.VIDEO_OUT],
-				60000
-			);
-
-			var apiConfig = new this.chromeLib.cast.ApiConfig(
-				sessionRequest,
-				this.sessionListener.bind(this),
-				this.receiverListener.bind(this),
-				this.chromeLib.cast.AutoJoinPolicy.TAB_AND_ORIGIN_SCOPED
-			);
-			this.chromeLib.cast.initialize(
-				apiConfig,
-				this.onInitSuccess.bind(this),
-				this.onError.bind(this)
-			);
-		},
-
-		sessionListener: function( e ) {
-			this.log("New session ID: " + e.sessionId);
-			this.session = e;
-			if (this.session.media.length !== 0) {
-				this.log('Found ' + this.session.media.length + ' existing media sessions.');
-				this.onMediaDiscovered('onRequestSessionSuccess_', this.session.media[0]);
-			}else{
-				this.onRequestSessionSuccess(e);
-			}
-			this.session.addMediaListener(
-				this.onMediaDiscovered.bind(this, 'addMediaListener'));
-			this.session.addUpdateListener(this.sessionUpdateListener.bind(this));
-		},
-
-		onMediaDiscovered: function(how, mediaSession) {
-			var _this = this;
-			this.embedPlayer.layoutBuilder.closeAlert();
-			this.inSequence = false;
-			// if page reloaded and in playlist - select the currently playing clip
-			if ( how === 'onRequestSessionSuccess_' && this.embedPlayer.playlist){
-				this.stopApp();
-				// TODO: handle playlist reload
-				return;
-//				var castedManifest = mediaSession.media.contentId;
-//				var castedMedia = castedManifest.substr(castedManifest.indexOf("/entryId/")+9,10);
-//				var currentManifest = this.embedPlayer.getSource().src;
-//				var currentMedia = currentManifest.substr(currentManifest.indexOf("/entryId/")+9,10);
-//				if (castedMedia !== currentMedia){
-//					setTimeout(function(){
-//						_this.casting = true;
-//						_this.embedPlayer.casting = true;
-//						_this.embedPlayer.sendNotification("playlistPlayMediaById",castedMedia);
-//					},0);
-//
-//				}
-			}
-			this.log("new media session ID:" + mediaSession.mediaSessionId + ' (' + how + ')');
-			this.currentMediaSession = mediaSession;
-			this.getComponent().css("color","#35BCDA");
-			this.updateTooltip(this.stopCastTitle);
-			mediaSession.addUpdateListener(function(e){_this.onMediaStatusUpdate(e);});
-			this.mediaCurrentTime = this.currentMediaSession.currentTime;
-			this.mediaDuration = this.currentMediaSession.media.duration;
-
-			// switch to Chromecast player
-			var chromeCastSource = this.getChromecastSource();
-			if (chromeCastSource){
-				// save player, current volume and current position
-				if (this.savedPlayer === null){
-					this.embedPlayer.pause(); // pause the current player if playing
-					this.savedPlayer = this.embedPlayer.selectedPlayer;
-				}
-				// we want to save the position only if we are no in an ad
-				if ((_this.embedPlayer.sequenceProxy && _this.embedPlayer.sequenceProxy.isInSequence) !== true){
-					this.savedPosition = this.embedPlayer.currentTime;
-				}
-				this.savedVolume = this.embedPlayer.volume;
-				// select Chromecast player
-				this.embedPlayer.selectPlayer(
-					mw.EmbedTypes.mediaPlayers.getPlayerById('chromecast')
-				);
-				this.embedPlayer.disablePlayer();
-				this.embedPlayer.updatePlaybackInterface(function(){
-					_this.embedPlayer.mediaElement.setSource(chromeCastSource);
-					_this.embedPlayer.receiverName = _this.session.receiver.friendlyName;
-					// set volume and position according to the video settings before switching players
-					_this.setVolume(null, _this.savedVolume);
-					if (_this.currentMediaSession.media.duration && _this.savedPosition > 0 && !_this.embedPlayer.changeMediaStarted){
-						_this.sendMessage({'type': 'notification','event': 'firstPlay', 'data': null});
-						_this.seekMedia(_this.savedPosition / _this.currentMediaSession.media.duration * 100);
-					}
-					// update media duration for durationLable component
-					_this.embedPlayer.mediaLoaded(_this.currentMediaSession);
-					if (_this.autoPlay){
-						_this.embedPlayer.play();
-					}
-					_this.updateScreen();
-					// hide kaltura logo
-					if ( _this.getConfig("receiverLogo") ){
-						_this.sendMessage({'type': 'hide', 'target': 'logo'});
-					}
-					if (_this.replay){
-						_this.replay = false;
-						_this.sendMessage({'type': 'notification','event': 'replay'});  // since we reload the media for replay, trigger playerReady on the receiver player to reset Analytics
-						_this.embedPlayer.play();
-					}
-
-					if (_this.monitorInterval !== null){
-						clearInterval(_this.monitorInterval);
-					}
-					_this.monitorInterval = setInterval(function(){
-						_this.monitor();
-					}, mw.getConfig('EmbedPlayer.MonitorRate'));
-				});
-			}
-		},
-
-		receiverListener: function(e) {
-			if( e === this.chromeLib.cast.ReceiverAvailability.AVAILABLE ) {
-				this.log("receiver found");
-			}
-			else {
-				this.log("receiver list empty");
-			}
-		},
-
-		onInitSuccess: function() {
-			var _this = this;
-			this.log("init success");
-			this.show();
-			this.bind("layoutBuildDone ended", function(){
-				_this.show();
-			});
-		},
-
-		onError: function(e) {
-			console.log("Chromecast: Error. code: " + e.code + ", description: " + e.description);
-		},
-
 		playMedia: function() {
 			if( !this.currentMediaSession ) {
 				return;
@@ -597,8 +676,6 @@
 			this.mediaCurrentTime = this.currentMediaSession.getEstimatedTime();
 			return this.mediaCurrentTime;
 		},
-
-
 
 		setVolume: function(e, percent){
 			if( !this.currentMediaSession ) {
@@ -711,82 +788,6 @@
 				_this.onMediaError
 			);
 			//});
-		},
-
-		stopMedia: function() {
-			if( !this.currentMediaSession ) {
-				return;
-			}
-
-			this.currentMediaSession.stop(null,
-				this.mediaCommandSuccessCallback.bind(this,
-					"stopped " + this.currentMediaSession.sessionId
-				),
-				this.onError
-			);
-			this.updateTooltip(this.startCastTitle);
-			this.log("media stopped");
-		},
-
-		stopApp: function() {
-			if (!this.casting){
-				return;
-			}
-			clearInterval(this.monitorInterval);
-			var _this = this;
-			this.getComponent().css("color","white");
-			this.updateTooltip(this.startCastTitle);
-			this.casting = false;
-			this.embedPlayer.casting = false;
-			this.embedPlayer.getInterface().find(".chromecastScreen").remove();
-			if (this.isNativeSDK){
-				return;
-			}
-			var seekTime = this.getCurrentTime();
-			// stop casting
-			this.session.stop(this.onStopAppSuccess, this.onError);
-			// restore native player
-			if (this.savedPlayer){
-				this.embedPlayer.selectPlayer(this.savedPlayer);
-				this.savedPlayer = null;
-			}
-			this.embedPlayer.disablePlayer();
-			this.embedPlayer.updatePlaybackInterface();
-			this.embedPlayer.enablePlayControls();
-			if (this.embedPlayer.playlist){
-				mw.setConfig("EmbedPlayer.KeepPoster",false);
-				mw.setConfig('EmbedPlayer.HidePosterOnStart', true);
-			}
-			if (this.embedPlayer.isLive()){
-				this.embedPlayer.pause();
-				setTimeout(function(){
-					_this.embedPlayer.setLiveOffSynch(false);
-					_this.embedPlayer.triggerHelper("movingBackToLive");
-					_this.embedPlayer.play();
-				},1000);
-			}else{
-				if ( this.embedPlayer.selectedPlayer.library == "Kplayer" ){
-					// since we don't have the canSeek promise, we need to reload the media on playerReady, wait for it to load and then preform the seek operation. Add a timeout as seek is not always available on the mediaLoaded event
-					this.bind("playerReady.stopCast", function(){
-						_this.unbind("playerReady.stopCast");
-						_this.bind("mediaLoaded.stopCast", function(){
-							_this.unbind("mediaLoaded.stopCast");
-							setTimeout(function(){
-								_this.embedPlayer.seek(seekTime, false);
-							},1000);
-						});
-						_this.embedPlayer.load();
-					})
-				}else{
-					this.embedPlayer.canSeek().then(function () {
-						_this.embedPlayer.seek(seekTime, false);
-					});
-				}
-			}
-		},
-
-		onStopAppSuccess: function() {
-			console.log("Chromecast: Session stopped");
 		},
 
 		onMediaError: function(e) {

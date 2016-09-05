@@ -57,7 +57,6 @@
 			var _this = this;
 			$.getScript("//www.gstatic.com/cast/sdk/libs/mediaplayer/1.0.0/media_player.js").
 				then(function(){
-					debugger;
 				_this.loadPlayer();
 				readyCallback();
 
@@ -106,93 +105,102 @@
 			});
 		},
 		loadPlayer: function(e, data){
-			debugger;
-
 			if (this.mediaPlayer !== null) {
 				this.mediaPlayer.unload(); // Ensure unload before loading again
 			}
 
-			this.mediaHost = new cast.player.api.Host({
-				'mediaElement': this.getPlayerElement(),
-				'url': this.getSrc()
-			});
-
-			//if (manifestCredentials) {
-			//	mediaHost.updateManifestRequestInfo = function (requestInfo) {
-			//		// example of setting CORS withCredentials
-			//		if (!requestInfo.url) {
-			//			requestInfo.url = url;
-			//		}
-			//		requestInfo.withCredentials = true;
-			//	};
-			//}
-			//if (segmentCredentials) {
-			//	mediaHost.updateSegmentRequestInfo = function (requestInfo) {
-			//		// example of setting CORS withCredentials
-			//		requestInfo.withCredentials = true;
-			//		// example of setting headers
-			//		//requestInfo.headers = {};
-			//		//requestInfo.headers['content-type'] = 'text/xml;charset=utf-8';
-			//	};
-			//}
-			//if (licenseCredentials) {
-			//	mediaHost.updateLicenseRequestInfo = function (requestInfo) {
-			//		// example of setting CORS withCredentials
-			//		requestInfo.withCredentials = true;
-			//	};
-			//}
-			//
+			this.resolveSrcURL( this.getSrc() ).then(
+				function(source){
+					return source;
+				},
+				function () { //error
+					return this.getSrc();
+				})
+				.then( function(url ){
 
 
-			//if ((videoQualityIndex != -1 && streamVideoBitrates &&
-			//	videoQualityIndex < streamVideoBitrates.length) ||
-			//	(audioQualityIndex != -1 && streamAudioBitrates &&
-			//	audioQualityIndex < streamAudioBitrates.length)) {
-			//	mediaHost['getQualityLevelOrig'] = mediaHost.getQualityLevel;
-			//	mediaHost.getQualityLevel = function (streamIndex, qualityLevel) {
-			//		if (streamIndex == videoStreamIndex && videoQualityIndex != -1) {
-			//			return videoQualityIndex;
-			//		} else if (streamIndex == audioStreamIndex &&
-			//			audioQualityIndex != -1) {
-			//			return audioQualityIndex;
-			//		} else {
-			//			return qualityLevel;
-			//		}
-			//	};
-			//}
+				this.mediaHost = new cast.player.api.Host({
+					'mediaElement': this.getPlayerElement(),
+					'url': url
+				});
 
-			this.mediaHost.onError = function (errorCode, requestStatus) {
-				this.log('### HOST ERROR - Fatal Error: code = ' + errorCode);
-				if (this.mediaPlayer !== null) {
-					this.mediaPlayer.unload();
+				//if (manifestCredentials) {
+				//	mediaHost.updateManifestRequestInfo = function (requestInfo) {
+				//		// example of setting CORS withCredentials
+				//		if (!requestInfo.url) {
+				//			requestInfo.url = url;
+				//		}
+				//		requestInfo.withCredentials = true;
+				//	};
+				//}
+				//if (segmentCredentials) {
+				//	mediaHost.updateSegmentRequestInfo = function (requestInfo) {
+				//		// example of setting CORS withCredentials
+				//		requestInfo.withCredentials = true;
+				//		// example of setting headers
+				//		//requestInfo.headers = {};
+				//		//requestInfo.headers['content-type'] = 'text/xml;charset=utf-8';
+				//	};
+				//}
+				//if (licenseCredentials) {
+				//	mediaHost.updateLicenseRequestInfo = function (requestInfo) {
+				//		// example of setting CORS withCredentials
+				//		requestInfo.withCredentials = true;
+				//	};
+				//}
+				//
+
+
+				//if ((videoQualityIndex != -1 && streamVideoBitrates &&
+				//	videoQualityIndex < streamVideoBitrates.length) ||
+				//	(audioQualityIndex != -1 && streamAudioBitrates &&
+				//	audioQualityIndex < streamAudioBitrates.length)) {
+				//	mediaHost['getQualityLevelOrig'] = mediaHost.getQualityLevel;
+				//	mediaHost.getQualityLevel = function (streamIndex, qualityLevel) {
+				//		if (streamIndex == videoStreamIndex && videoQualityIndex != -1) {
+				//			return videoQualityIndex;
+				//		} else if (streamIndex == audioStreamIndex &&
+				//			audioQualityIndex != -1) {
+				//			return audioQualityIndex;
+				//		} else {
+				//			return qualityLevel;
+				//		}
+				//	};
+				//}
+
+				this.mediaHost.onError = function (errorCode, requestStatus) {
+					this.log('### HOST ERROR - Fatal Error: code = ' + errorCode);
+					if (this.mediaPlayer !== null) {
+						this.mediaPlayer.unload();
+					}
+				};
+
+				this.protocol = null;
+				var mimeType = this.getSource().getMIMEType();
+
+				this.mediaHost.licenseUrl = this.buildUdrmLicenseUri(mimeType);
+
+				switch(mimeType){
+					case "application/vnd.apple.mpegurl":
+						this.protocol = cast.player.api.CreateHlsStreamingProtocol(this.mediaHost);
+						break;
+					case "application/dash+xml":
+						this.protocol = cast.player.api.CreateDashStreamingProtocol(this.mediaHost);
+						break;
+					case "video/playreadySmooth":
+						this.protocol = cast.player.api.CreateSmoothStreamingProtocol(this.mediaHost);
+						break;
 				}
-			};
 
-			this.protocol = null;
-			var mimeType = this.getSource().getMIMEType();
+				// Advanced Playback - HLS, MPEG DASH, SMOOTH STREAMING
+				// Player registers to listen to the media element events through the
+				// mediaHost property of the  mediaElement
 
-			this.mediaHost.licenseUrl = this.buildUdrmLicenseUri(mimeType);
-
-			switch(mimeType){
-				case "application/vnd.apple.mpegurl":
-					this.protocol = cast.player.api.CreateHlsStreamingProtocol(this.mediaHost);
-					break;
-				case "application/dash+xml":
-					this.protocol = cast.player.api.CreateDashStreamingProtocol(this.mediaHost);
-					break;
-				case "video/playreadySmooth":
-					this.protocol = cast.player.api.CreateSmoothStreamingProtocol(this.mediaHost);
-					break;
-			}
-
-			// Advanced Playback - HLS, MPEG DASH, SMOOTH STREAMING
-			// Player registers to listen to the media element events through the
-			// mediaHost property of the  mediaElement
-
-			this.mediaPlayer = new cast.player.api.Player(this.mediaHost);
-			var startTimeDuration = this.startTime;
-			var initialTimeIndexSeconds = this.isLive() ? Infinity : startTimeDuration;
-			this.mediaPlayer.load(this.protocol, initialTimeIndexSeconds);
+				this.mediaPlayer = new cast.player.api.Player(this.mediaHost);
+				var startTimeDuration = this.startTime;
+				var initialTimeIndexSeconds = this.isLive() ? Infinity : startTimeDuration;
+				this.mediaPlayer.load(this.protocol, initialTimeIndexSeconds);
+			}.bind(this));
 		},
 		buildUdrmLicenseUri: function(mimeType) {
 			var licenseServer = mw.getConfig('Kaltura.UdrmServerURL');
@@ -235,7 +243,7 @@
 			$.each(_this.nativeEvents, function (inx, eventName) {
 				$(vid).unbind(eventName + _this.bindPostfix).bind(eventName + _this.bindPostfix, function () {
 					// make sure we propagating events, and the current instance is in the correct closure.
-					console.info(eventName);
+					(eventName!=="timeupdate") && console.info(eventName);
 					if (_this._propagateEvents && _this.instanceOf == 'ChromecastReceiver') {
 						var argArray = $.makeArray(arguments);
 						// Check if there is local handler:
@@ -254,8 +262,12 @@
 		 * Handle the native paused event
 		 */
 		_onpause: function () {
-			this.pause();
-			$(this).trigger('onPlayerStateChange', [ "pause", "play" ]);
+			if (this.mediaPlayer.getState()['underflow']){
+				console.info("buffer start");
+			} else {
+				this.pause();
+				$(this).trigger('onPlayerStateChange', ["pause", "play"]);
+			}
 
 		},
 		_onplaying:function(){
@@ -266,7 +278,8 @@
 		/**
 		 * Handle the native play event
 		 */
-		_onplay: function () {
+		_onplay: function (){
+			console.info("play underflow: " + this.mediaPlayer.getState()['underflow']);
 			this.restoreEventPropagation();
 			if (this.currentState === "pause" || this.currentState === "start"){
 				this.play();
