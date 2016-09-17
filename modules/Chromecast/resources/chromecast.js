@@ -26,7 +26,8 @@
 			'debugKalturaPlayer': false,
 			'uiconfid':null,
 			'defaultConfig':true,
-			'disableSenderUI':false
+			'disableSenderUI':false,
+			'defaultThumbnail': ''
 
 		},
 		isDisabled: false,
@@ -265,7 +266,17 @@
 			});
 
 			$( this.embedPlayer).bind('onChangeMedia', function(e){
-				_this.sendMessage({'type': 'changeMedia', 'entryId': _this.embedPlayer.kentryid});
+				var changeMediaMsg = {
+					'type': 'changeMedia',
+					'data': {
+						'entryId': _this.embedPlayer.kentryid
+					}
+				};
+				var proxyData = _this.embedPlayer.getKalturaConfig("proxyData");
+				if (proxyData && proxyData.data){
+					changeMediaMsg.data.proxyData = proxyData.data;
+				}
+				_this.sendMessage(changeMediaMsg);
 				_this.savedPosition = 0;
 				_this.pendingReplay = false;
 				_this.pendingRelated = false;
@@ -836,10 +847,11 @@
 		},
 
 		getPlayingScreen: function(){
+			var thumbnail = this.getConfig('defaultThumbnail') !== "" ? this.getConfig('defaultThumbnail') : this.embedPlayer.poster;
 			return '<div class="chromecastScreen" style="background-color: rgba(0,0,0,0.7); width: 100%; height: 100%; font-family: Arial; position: absolute">' +
 				'<div class="chromecastPlayback">' +
 				'<div class="chromecastThumbBorder">' +
-				'<img class="chromecastThumb" src="' + this.embedPlayer.poster + '"></img></div> ' +
+				'<img class="chromecastThumb" src="' + thumbnail + '"></img></div> ' +
 				'<div class="titleHolder">' +
 				'<span class="chromecastTitle"></span><br>' +
 				'<div><i class="icon-chromecast chromecastPlayingIcon chromecastPlaying"></i>' +
