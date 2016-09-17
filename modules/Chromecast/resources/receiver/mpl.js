@@ -547,6 +547,11 @@ function setCastReceiverManagerEvents() {
 
 		senders = castReceiverManager.getSenders();
 		setDebugMessage('senderCount', '' + senders.length);
+		console.log('### Cast Receiver Manager - Sender Disconnected : ' + senders.length);
+		if(senders.length == 0 &&
+			event.reason == cast.receiver.system.DisconnectReason.REQUESTED_BY_SENDER) {
+			castReceiverManager.stop();
+		}
 	};
 
 	castReceiverManager.onSystemVolumeChanged = function (event) {
