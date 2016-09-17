@@ -683,18 +683,17 @@
 			}
 
 			this.embedPlayer.volume = percent;
-			var volume = new this.chromeLib.cast.Volume();
-			volume.level = percent;
-			volume.muted = (percent === 0);
-			var request = new this.chromeLib.cast.media.VolumeRequest();
-			request.volume = volume;
-			this.currentMediaSession.setVolume( request,
-				this.mediaCommandSuccessCallback.bind(
-					this,
-					'media set-volume done'
-				),
-				this.onError
-			);
+
+			if( percent === 0 ) {
+				this.session.setReceiverMuted(true,
+					this.mediaCommandSuccessCallback.bind(this),
+					this.onError.bind(this));
+			}
+			else {
+				this.session.setReceiverVolumeLevel(percent,
+					this.mediaCommandSuccessCallback.bind(this),
+					this.onError.bind(this));
+			}
 		},
 
 		mediaCommandSuccessCallback: function(info) {
