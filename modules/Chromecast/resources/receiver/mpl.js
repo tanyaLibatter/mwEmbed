@@ -142,7 +142,6 @@ onload = function () {
 				s.type = "text/javascript";
 				s.src = playerLib;
 				document.head.appendChild(s);
-
 				var intervalID = setInterval(function () {
 					if (typeof mw !== "undefined") {
 						clearInterval(intervalID);
