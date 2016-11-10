@@ -136,6 +136,12 @@ onload = function () {
 			}
 			kdp.sendNotification('changeMedia', payload.data);
 		} else if (payload['type'] === 'embed') {
+			var playerLib = payload['lib'] + "mwEmbedLoader.php";
+			var s = document.createElement("script");
+			s.type = "text/javascript";
+			s.src = playerLib;
+			document.head.appendChild(s);
+
 			if (!playerInitialized) {
 				var intervalID = setInterval(function () {
 					if (typeof mw !== "undefined") {
