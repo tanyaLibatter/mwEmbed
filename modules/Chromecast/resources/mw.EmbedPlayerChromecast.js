@@ -66,7 +66,7 @@
 				this.vid.mediaFinishedCallback();
 				this.vid.mediaFinishedCallback = null;
 			}
-			$(this.vid).trigger("ended");
+			//$(this.vid).trigger("ended");
 			this.onClipDone();
 		},
 
@@ -82,6 +82,16 @@
 			$(this).trigger("chromecastPause");
 			$(this.vid).trigger("onpause");
 			this.parent_pause();
+		},
+		_onplay: function(){
+			if (this.paused) {
+				this.parent_play();
+			}
+		},
+		_onpause: function(){
+			if (!this.paused) {
+				this.parent_pause();
+			}
 		},
 
 		canAutoPlay: function () {

@@ -390,27 +390,42 @@
 		loadIma:function( successCB, failureCB ){
 			var _this = this;
 			var isLoaded = false;
-			var timeoutVal = _this.getConfig("adsManagerLoadedTimeout") || 5000;
+			var timeoutVal = _this.getConfig("adsManagerLoadedTimeout") || 15000;
 			mw.log( "DoubleClick::loadIma: start timer for adsManager loading check: " + timeoutVal + "ms");
-			setTimeout(function(){
-				if ( !isLoaded ){
-					mw.log( "DoubleClick::loadIma: adsManager failed loading after " + timeoutVal + "ms");
-					failureCB();
-				}
-			}, timeoutVal);
+			//setTimeout(function(){
+			//	if ( !isLoaded ){
+			//		mw.log( "DoubleClick::loadIma: adsManager failed loading after " + timeoutVal + "ms");
+			//		failureCB();
+			//	}
+			//}, timeoutVal);
 
-			var imaURL =  '//s0.2mdn.net/instream/html5/ima3.js';
+			var imaURL =  '//imasdk.googleapis.com/js/sdkloader/ima3.js';
 			if ( this.getConfig( 'debugMode' ) === true ){
 				imaURL =  '//s0.2mdn.net/instream/html5/ima3_debug.js';
 			}
-			$.getScript( imaURL , function() {
+			var t0 = performance.now();
+			$.ajax({
+				url: imaURL,
+				dataType: "script",
+				cache: true,
+				timeout: timeoutVal
+			}).done(function(){
+				console.info("load", performance.now()-t0);
 				isLoaded = true;
 				successCB();
-			} )
-				.fail( function( jqxhr, settings, errorCode ) {
-					isLoaded = true;
-					failureCB( errorCode );
-				} );
+			}).fail(function(jqxhr, settings, errorCode){
+				console.info("fail", performance.now()-t0);
+				isLoaded = true;
+				failureCB( errorCode );
+			});
+			//$.getScript( imaURL , function() {
+			//	isLoaded = true;
+			//	successCB();
+			//} )
+			//	.fail( function( jqxhr, settings, errorCode ) {
+			//		isLoaded = true;
+			//		failureCB( errorCode );
+			//	} );
 		},
 		startAdsManager: function(){
 			if (this.embedPlayer.casting){
@@ -889,7 +904,7 @@
 				adsRequest.adTagUrl = encodeURIComponent(adsRequest.adTagUrl);
 				this.embedPlayer.getPlayerElement().sendNotification( 'requestAds', adsRequest );
 				mw.log( "DoubleClick::requestAds: Chromeless player request ad from KDP plugin");
-				var timeout = this.getConfig("adsManagerLoadedTimeout") || (mw.isChromeCast() ? 15000 : 5000);
+				var timeout = 15000;
 				this.chromelessAdManagerLoadedId = setTimeout(function(){
 					mw.log( "DoubleClick::Error: AdsManager failed to load by Flash plugin after " + timeout + " seconds.");
 					_this.restorePlayer(true);
@@ -1238,6 +1253,7 @@
 				if ( _this.currentAdSlotType != 'postroll') {
 					_this.restorePlayer();
 				}
+				$(_this.embedPlayer).trigger('onContentResumeRequested');
 			});
 			adsListener( 'ALL_ADS_COMPLETED', function(){
 				// check that content is done before we restore the player, managed players with only pre-rolls fired
@@ -1677,7 +1693,7 @@
 			// always get the config from the embedPlayer so that is up-to-date
 			return this.embedPlayer.getKalturaConfig( this.pluginName, attrName );
 		},
-		destroy:function(){
+			destroy:function(){
 			// remove any old bindings:
 			var _this = this;
 			if ( this.adTagUrl || this.currentAdSlotType === "postroll" ){

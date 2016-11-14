@@ -20,6 +20,7 @@
 			'overlays': true
 		},
 		mediaPlayer: null,
+		preloaded: false,
 		seeking: false,
 		triggerReplayEvent: false, // since native replay is not supported in the Receiver, we use this flag to send a replay event to Analytics
 		currentTime: 0,
@@ -89,14 +90,14 @@
 				_this.currentTime = _this.getPlayerElement().duration;
 				_this.updatePlayheadStatus();
 			});
-			this.bindHelper("onAdOpen", function(event, id, system, type){
-				_this.triggerHelper("broadcastToSender", ["chromecastReceiverAdOpen"]);
+			this.bindHelper("onAdOpen", function(){
+				_this.triggerHelper("broadcastToSender", [{type: "chromecastReceiverAdOpen"}]);
 			});
 			this.bindHelper("AdSupport_AdUpdateDuration", function(event, duration){
-				_this.triggerHelper("broadcastToSender", ["chromecastReceiverAdDuration|" + duration]);
+				_this.triggerHelper("broadcastToSender", [{type: "chromecastReceiverAdDuration", "duration": duration}]);
 			});
-			this.bindHelper("onAdComplete", function(){
-				_this.triggerHelper("broadcastToSender", ["chromecastReceiverAdComplete"]);
+			this.bindHelper("onContentResumeRequested", function(){
+				_this.triggerHelper("broadcastToSender", [{type: "chromecastReceiverAdComplete"}]);
 				_this.triggerHelper("cancelAllAds");
 			});
 			this.bindHelper("ccSelectClosedCaptions sourceSelectedByLangKey", function(e, label){
@@ -109,14 +110,15 @@
 				this.mediaPlayer.unload(); // Ensure unload before loading again
 			}
 
-			this.resolveSrcURL( this.getSrc() ).then(
-				function(source){
-					return source;
-				},
-				function () { //error
-					return this.getSrc();
-				})
-				.then( function(url ){
+			var url = this.getSrc();
+			//this.resolveSrcURL( src ).then(
+			//	function(source){
+			//		return source;
+			//	},
+			//	function () { //error
+			//		return src;
+			//	})
+			//	.then( function(url ){
 
 
 				this.mediaHost = new cast.player.api.Host({
@@ -173,7 +175,16 @@
 					if (this.mediaPlayer !== null) {
 						this.mediaPlayer.unload();
 					}
-				};
+				}.bind(this);
+
+			this.mediaHost.onAutoPause = function(underflow){
+				if (underflow){
+					this.bufferStart();
+				} else {
+					this.bufferEnd();
+				}
+
+			}.bind(this);
 
 				this.protocol = null;
 				var mimeType = this.getSource().getMIMEType();
@@ -199,8 +210,9 @@
 				this.mediaPlayer = new cast.player.api.Player(this.mediaHost);
 				var startTimeDuration = this.startTime;
 				var initialTimeIndexSeconds = this.isLive() ? Infinity : startTimeDuration;
-				this.mediaPlayer.load(this.protocol, initialTimeIndexSeconds);
-			}.bind(this));
+				this.mediaPlayer.preload(this.protocol);
+				this.preloaded = true;
+			//}.bind(this));
 		},
 		buildUdrmLicenseUri: function(mimeType) {
 			var licenseServer = mw.getConfig('Kaltura.UdrmServerURL');
@@ -258,10 +270,35 @@
 			});
 		},
 
+		play: function(){
+			//If got play and we are in ended state then need to replay by reloading media first
+			if (this.currentState == "end") {
+				this.log("Reloading media player");
+				this.mediaPlayer.reload();
+			}
+			//Check that ads are not playing
+			if (this.parent_play()) {
+				//In case we are in preloaded state we need to attach the media source to the
+				//video element now, before actual playback starts
+				if (this.preloaded){
+					this.preloaded = false;
+					this.log("Attach preloaded media player");
+					this.mediaPlayer.load();
+				}
+				this.log("Play when have enough data");
+				this.mediaPlayer.playWhenHaveEnoughData();
+			}
+		},
+		pause: function(){
+			this.parent_pause();
+			this.getPlayerElement().pause();
+		},
+
 		/**
 		 * Handle the native paused event
 		 */
 		_onpause: function () {
+			console.info("underflow: " + this.mediaPlayer.getState()['underflow']);
 			if (this.mediaPlayer.getState()['underflow']){
 				console.info("buffer start");
 			} else {
@@ -271,6 +308,7 @@
 
 		},
 		_onplaying:function(){
+			console.info("underflow: " + this.mediaPlayer.getState()['underflow']);
 			this.hideSpinner();
 			this.triggerHelper("playing");
 			this.triggerHelper( 'hidePlayerControls' );
@@ -279,16 +317,16 @@
 		 * Handle the native play event
 		 */
 		_onplay: function (){
-			console.info("play underflow: " + this.mediaPlayer.getState()['underflow']);
+			console.info("underflow: " + this.mediaPlayer.getState()['underflow']);
 			this.restoreEventPropagation();
-			if (this.currentState === "pause" || this.currentState === "start"){
-				this.play();
-				this.triggerHelper('onPlayerStateChange', [ "play", this.currentState ]);
-			}
-			if (this.triggerReplayEvent){
-				this.triggerHelper('replayEvent');
-				this.triggerReplayEvent = false;
-			}
+			//if (this.currentState === "pause" || this.currentState === "start"){
+			//	this.play();
+			//	this.triggerHelper('onPlayerStateChange', [ "play", this.currentState ]);
+			//}
+			//if (this.triggerReplayEvent){
+			//	this.triggerHelper('replayEvent');
+			//	this.triggerReplayEvent = false;
+			//}
 			this.triggerHelper( 'hidePlayerControls' );
 
 		},
@@ -317,6 +355,77 @@
 					this.syncCurrentTime();
 					this.updatePlayheadStatus();
 				}
+			}
+		},
+		_onended: function () {
+			this.onClipDone();
+		},
+		_onloadeddata: function(){
+			return;
+			if (this.protocol === undefined || this.protocol === null){
+				return;
+			}
+			var streamCount = this.protocol.getStreamCount();
+			var streamInfo;
+			var streamVideoCodecs;
+			var streamAudioCodecs;
+			var captions = {};
+			for (var c = 0; c < streamCount; c++) {
+				streamInfo = this.protocol.getStreamInfo(c);
+				if (streamInfo.mimeType.indexOf('text') === 0) {
+					captions[c] = streamInfo.language;
+				} else if (streamInfo.mimeType === 'video/mp4' ||
+					streamInfo.mimeType === 'video/mp2t') {
+					streamVideoCodecs = streamInfo.codecs;
+					streamVideoBitrates = streamInfo.bitrates;
+					var videoLevel;
+					if (maxBW) {
+						videoLevel = this.protocol.getQualityLevel(c, maxBW);
+					}
+					else {
+						videoLevel = this.protocol.getQualityLevel(c);
+					}
+					this.log('streamVideoQuality', streamInfo.bitrates[videoLevel]);
+					videoStreamIndex = c;
+				} else if (streamInfo.mimeType === 'audio/mp4') {
+					audioStreamIndex = c;
+					//setDebugMessage('audioStreamIndex', audioStreamIndex);
+					streamAudioCodecs = streamInfo.codecs;
+					streamAudioBitrates = streamInfo.bitrates;
+					var audioLevel = this.protocol.getQualityLevel(c);
+					//setDebugMessage('streamAudioQuality', streamInfo.bitrates[audioLevel]);
+				}
+				else {
+				}
+			}
+			//setDebugMessage('streamCount', streamCount);
+			//setDebugMessage('streamVideoCodecs', streamVideoCodecs);
+			//setDebugMessage('streamVideoBitrates', JSON.stringify(streamVideoBitrates));
+			//setDebugMessage('streamAudioCodecs', streamAudioCodecs);
+			//setDebugMessage('streamAudioBitrates', JSON.stringify(streamAudioBitrates));
+			//setDebugMessage('captions', JSON.stringify(captions));
+
+			// send captions to senders
+			console.log(JSON.stringify(captions));
+			if (Object.keys(captions).length > 0) {
+				var caption_message = {};
+				caption_message['captions'] = captions;
+				//messageSender(senders[0], JSON.stringify(caption_message));
+				broadcast(JSON.stringify(caption_message));
+			}
+
+			// send video bitrates to senders
+			if (streamVideoBitrates && Object.keys(streamVideoBitrates).length > 0) {
+				var video_bitrates_message = {};
+				video_bitrates_message['video_bitrates'] = streamVideoBitrates;
+				broadcast(JSON.stringify(video_bitrates_message));
+			}
+
+			// send audio bitrates to senders
+			if (streamAudioBitrates && Object.keys(streamAudioBitrates).length > 0) {
+				var audio_bitrates_message = {};
+				audio_bitrates_message['audio_bitrates'] = streamAudioBitrates;
+				broadcast(JSON.stringify(audio_bitrates_message));
 			}
 		},
 		changeMediaCallback: function (callback) {
@@ -354,6 +463,20 @@
 
 		isVideoSiblingEnabled: function() {
 			return false;
+		},
+		playerSwitchSource: function ( source , switchCallback , doneCallback ) {
+			//we are not supposed to switch source. Ads can be played as siblings. Change media doesn't use this method.
+			if ( switchCallback ) {
+				switchCallback( this.playerObject );
+			}
+			setTimeout( function () {
+				if ( doneCallback ) {
+					doneCallback();
+				}
+			} , 100 );
+		} ,
+		canAutoPlay: function () {
+			return true;
 		}
 	};
 	} )( mediaWiki, jQuery );

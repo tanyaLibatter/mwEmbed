@@ -15,116 +15,145 @@ var castReceiverManager = null; // an instance of cast.receiver.CastReceiverMana
 var mediaManager = null;  // an instance of cast.receiver.MediaManager
 var messageBus = null;  // custom message bus
 var mediaElement = null;  // media element
-var mediaHost = null;  // an instance of cast.player.api.Host
-var mediaProtocol = null;  // an instance of cast.player.api.Protocol
 var mediaPlayer = null;  // an instance of cast.player.api.Player
 var playerInitialized = false;
-var isInSequence = false;
 var debugMode = true;
 var kdp;
+var idleTimerId_;
+var currentState;
+var isUnderflow = false;
+var logoElement;
+var maskAdEndedIdelState = false;
+/**
+ * The amount of time in a given state before the player goes idle.
+ */
+var IDLE_TIMEOUT = {
+	LAUNCHING: 1000 * 60 * 5, // 5 minutes
+	LOADING: 1000 * 60 * 5,  // 5 minutes
+	PAUSED: 1000 * 60 * 20,  // 20 minutes
+	DONE: 1000 * 60 * 5,     // 5 minutes
+	IDLE: 1000 * 60 * 5      // 5 minutes
+};
+var State = {
+	LAUNCHING: 'launching',
+	LOADING: 'loading',
+	BUFFERING: 'buffering',
+	PLAYING: 'playing',
+	PAUSED: 'paused',
+	DONE: 'done',
+	IDLE: 'idle'
+};
 
+function setState(state, opt_crossfade, opt_delay) {
+	currentState = state;
+	//self.element_.setAttribute('state', state);
+	//self.updateApplicationState_();
+	setIdleTimeout_(IDLE_TIMEOUT[state.toUpperCase()]);
+	console.info("Set state: " + state);
+}
+
+function setIdleTimeout_ (t) {
+	//this.log_('setIdleTimeout_: ' + t);
+	clearTimeout(idleTimerId_);
+	if (t) {
+		idleTimerId_ = setTimeout(function() {
+			castReceiverManager.stop();
+		}, t);
+	}
+}
 
 onload = function () {
 	if (debugMode){
 		cast.receiver.logger.setLevelValue(cast.receiver.LoggerLevel.DEBUG);
-		//cast.player.api.setLoggerLevel(cast.player.api.LoggerLevel.DEBUG);
 	}
 
-	mediaElement = document.getElementById('receiverVideoElement');
-	mediaElement.autoplay = true;
+	logoElement =  document.getElementById('logo');
 
-	//setMediaElementEvents(mediaElement);
+	setState(State.LAUNCHING, false);
+
+	mediaElement = document.getElementById('receiverVideoElement');
+	//mediaElement.autoplay = true;
+
 	mediaManager = new cast.receiver.MediaManager(mediaElement);
 	setMediaManagerEvents();
 	castReceiverManager = cast.receiver.CastReceiverManager.getInstance();
-	messageBus = castReceiverManager.getCastMessageBus('urn:x-cast:com.kaltura.cast.player');
+	messageBus = castReceiverManager.getCastMessageBus('urn:x-cast:com.kaltura.cast.player',  cast.receiver.CastMessageBus.JSON);
 
 	setCastReceiverManagerEvents();
-	setTimeout(function(){
+	//setTimeout(function(){
 		initApp();
-	},5000);
+	//},10000);
 
-	messageBus.onMessage = function (event) {
-		console.log('### Message Bus - Media Message: ' + JSON.stringify(event));
-		setDebugMessage('messageBusMessage', event);
-
-		console.log('### CUSTOM MESSAGE: ' + JSON.stringify(event));
-		// show/hide messages
-		console.log(event['data']);
-		var payload = JSON.parse(event['data']);
-		if (payload['type'] === 'show') {
-			if (payload['target'] === 'debug') {
-				document.getElementById('messages').style.display = 'block';
-			}
-			if (payload['target'] === 'logo') {
-				document.getElementById('logo').style.display = 'block';
-			} else {
-				document.getElementById('receiverVideoElement').style.display = 'block';
-			}
-		} else if (payload['type'] === 'hide') {
-			if (payload['target'] === 'debug') {
-				document.getElementById('messages').style.display = 'none';
-			}
-			if (payload['target'] === 'logo') {
-				var logoElement =  document.getElementById('logo');
-				logoElement.style.opacity = 0;
-				setTimeout(function() {
-					logoElement.style.display = 'none';
-				},1000);
-			} else {
-				document.getElementById('receiverVideoElement').style.display = 'none';
-			}
-		} else if (payload['type'] === 'ENABLE_CC') {
-			var trackNumber = payload['trackNumber'];
-			setCaption(trackNumber);
-		} else if (payload['type'] === 'WebVTT') {
-			mediaPlayer.enableCaptions(false);
-			mediaPlayer.enableCaptions(true, 'webvtt', 'captions.vtt');
-		} else if (payload['type'] === 'TTML') {
-			mediaPlayer.enableCaptions(false);
-			mediaPlayer.enableCaptions(true, 'ttml', 'captions.ttml');
-		} else if (payload['type'] === 'maxBW') {
-			maxBW = payload['value'];
-		} else if (payload['type'] === 'license') {
-			licenseUrl = payload['value'];
-			setDebugMessage('licenseUrl', licenseUrl);
-		} else if (payload['type'] === 'qualityIndex' &&
-			payload['mediaType'] === 'video') {
-			videoQualityIndex = payload['value'];
-			setDebugMessage('videoQualityIndex', videoQualityIndex);
-		} else if (payload['type'] === 'qualityIndex' &&
-			payload['mediaType'] === 'audio') {
-			audioQualityIndex = payload['value'];
-			setDebugMessage('audioQualityIndex', audioQualityIndex);
-		} else if (payload['type'] === 'manifestCredentials') {
-			manifestCredentials = payload['value'];
-			setDebugMessage('manifestCredentials', manifestCredentials);
-		} else if (payload['type'] === 'segmentCredentials') {
-			segmentCredentials = payload['value'];
-			setDebugMessage('segmentCredentials', segmentCredentials);
-		} else if (payload['type'] === 'licenseCredentials') {
-			licenseCredentials = payload['value'];
-			setDebugMessage('licenseCredentials', licenseCredentials);
-		} else if (payload['type'] === 'customData') {
-			customData = payload['value'];
-			setDebugMessage('customData', customData);
-		} else if (payload['type'] === 'load') {
-			//setMediaManagerEvents();
-		} else if (payload['type'] === 'notification') {
-			kdp.sendNotification(payload['event'], [payload['data']]); // pass notification event to the player
-		} else if (payload['type'] === 'setLogo') {
-			document.getElementById('logo').style.backgroundImage = "url(" + payload['logo'] + ")";
-		} else if (payload['type'] === 'changeMedia') {
-			kdp.sendNotification('changeMedia', {"entryId": payload['entryId']});
-		} else {
-			licenseUrl = null;
-		}
-		// broadcast(event['data']);
-	};
-
-
+	messageBus.onMessage = onMessage.bind(this);
 };
+
+function onMessage(event){
+	var payload = JSON.parse(event['data']);
+	console.log('### Message Bus - Media Message: ', payload);
+	if (payload['type'] === 'show') {
+		if (payload['target'] === 'logo') {
+			logoElement.style.display = 'block';
+		} else {
+			document.getElementById('receiverVideoElement').style.display = 'block';
+		}
+	} else if (payload['type'] === 'hide') {
+		if (payload['target'] === 'logo') {
+			logoElement.style.opacity = 0;
+			setTimeout(function() {
+				logoElement.style.display = 'none';
+			},1000);
+		} else {
+			document.getElementById('receiverVideoElement').style.display = 'none';
+		}
+	} else if (payload['type'] === 'ENABLE_CC') {
+		var trackNumber = payload['trackNumber'];
+		setCaption(trackNumber);
+	} else if (payload['type'] === 'WebVTT') {
+		mediaPlayer.enableCaptions(false);
+		mediaPlayer.enableCaptions(true, 'webvtt', 'captions.vtt');
+	} else if (payload['type'] === 'TTML') {
+		mediaPlayer.enableCaptions(false);
+		mediaPlayer.enableCaptions(true, 'ttml', 'captions.ttml');
+	} else if (payload['type'] === 'maxBW') {
+		maxBW = payload['value'];
+	} else if (payload['type'] === 'qualityIndex' &&
+		payload['mediaType'] === 'video') {
+		videoQualityIndex = payload['value'];
+		setDebugMessage('videoQualityIndex', videoQualityIndex);
+	} else if (payload['type'] === 'qualityIndex' &&
+		payload['mediaType'] === 'audio') {
+		audioQualityIndex = payload['value'];
+		setDebugMessage('audioQualityIndex', audioQualityIndex);
+	} else if (payload['type'] === 'customData') {
+		customData = payload['value'];
+		setDebugMessage('customData', customData);
+	} else if (payload['type'] === 'load') {
+		//setMediaManagerEvents();
+	} else if (payload['type'] === 'notification') {
+		kdp.sendNotification(payload['event'], [payload['data']]); // pass notification event to the player
+	} else if (payload['type'] === 'setLogo') {
+		document.getElementById('logo').style.backgroundImage = "url(" + payload['logo'] + ")";
+	} else if (payload['type'] === 'changeMedia') {
+		kdp.sendNotification('changeMedia', {"entryId": payload['entryId']});
+	} else {
+		licenseUrl = null;
+	}
+	// broadcast(event['data']);
+}
+
 function setMediaManagerEvents() {
+	mediaManager.customizedStatusCallback= function(status){
+		console.info(status);
+		if (maskAdEndedIdelState && (status.playerState = cast.receiver.media.PlayerState.IDLE)){
+			console.info("Preventing IDLE on ad ended event, set player state to BUFFERING");
+			status.playerState = cast.receiver.media.PlayerState.PLAYING;
+			maskAdEndedIdelState = false;
+		}
+		if (maskAdEndedIdelState && (status.playerState === cast.receiver.media.PlayerState.PLAYING)){
+
+		}
+		return status;
+	};
 	/**
 	 * Called when the media ends.
 	 *
@@ -136,7 +165,15 @@ function setMediaManagerEvents() {
 	 */
 	mediaManager.onEnded = function () {
 		setDebugMessage('mediaManagerMessage', 'ENDED');
-		if (!isInSequence){
+		if (kdp.evaluate('{sequenceProxy.isInSequence}')) {
+			maskAdEndedIdelState = true;
+		} else {
+			logoElement.style.opacity = 1;
+			setTimeout(function() {
+				kdp.sendNotification("hidePlayerControls");
+				logoElement.style.display = 'block';
+			},1000);
+			setState(State.IDLE, true);
 			mediaManager['onEndedOrig']();
 		}
 	};
@@ -153,7 +190,7 @@ function setMediaManagerEvents() {
 	 */
 	mediaManager.onError = function (obj) {
 		setDebugMessage('mediaManagerMessage', 'ERROR - ' + JSON.stringify(obj));
-
+		setState(State.IDLE, true);
 		mediaManager['onErrorOrig'](obj);
 		if (mediaPlayer) {
 			mediaPlayer.unload();
@@ -246,7 +283,14 @@ function setMediaManagerEvents() {
 	 */
 	mediaManager.onPause = function (event) {
 		console.log('### Media Manager - PAUSE: ' + JSON.stringify(event));
-		setDebugMessage('mediaManagerMessage', 'PAUSE: ' + JSON.stringify(event));
+		var isIdle = this.state_ === State.IDLE;
+		var isDone = kdp.evaluate("{video.player.currentTime}") === kdp.evaluate("{duration}");
+		if (isUnderflow) {
+			setState(State.BUFFERING, false);
+		} else if (!isIdle && !isDone) {
+			setState(State.PAUSED, false);
+		}
+		kdp.sendNotification("doPause");
 		mediaManager['onPauseOrig'](event);
 	};
 
@@ -262,10 +306,10 @@ function setMediaManagerEvents() {
 	 * @param {Object} event
 	 */
 	mediaManager.onPlay = function (event) {
-		console.log('### Media Manager - PLAY: ' + JSON.stringify(event));
+		console.log('### Media Manager - PLAY');
 		setDebugMessage('mediaManagerMessage', 'PLAY: ' + JSON.stringify(event));
-
-		mediaManager['onPlayOrig'](event);
+		kdp.sendNotification("doPlay");
+		//mediaManager['onPlayOrig'](event);
 	};
 
 	/**
@@ -286,8 +330,12 @@ function setMediaManagerEvents() {
 	mediaManager.onSeek = function (event) {
 		console.log('### Media Manager - SEEK: ' + JSON.stringify(event));
 		setDebugMessage('mediaManagerMessage', 'SEEK: ' + JSON.stringify(event));
-
-		mediaManager['onSeekOrig'](event);
+		if (kdp.evaluate('{sequenceProxy.isInSequence}')) {
+			var requestId = event.data.requestId;
+			window.mediaManager.broadcastStatus(true, requestId);
+		} else {
+			mediaManager['onSeekOrig'](event);
+		}
 	};
 
 	/**
@@ -331,8 +379,7 @@ function setMediaManagerEvents() {
 	 */
 	mediaManager.onStop = function (event) {
 		console.log('### Media Manager - STOP: ' + JSON.stringify(event));
-		setDebugMessage('mediaManagerMessage', 'STOP: ' + JSON.stringify(event));
-
+		setState(State.IDLE, false);
 		mediaManager['onStopOrig'](event);
 	};
 
@@ -353,103 +400,114 @@ function setMediaManagerEvents() {
 	 * @param {Object} event
 	 */
 	mediaManager.onLoad = function (event) {
+		clearTimeout(idleTimerId_);
 		var embedInfo = event.data.media.customData;
-		messageBus.broadcast("mediaManager.onLoad");
-		console.log('### Media Manager - LOAD: ' + JSON.stringify(event));
-		setDebugMessage('mediaManagerMessage', 'LOAD ' + JSON.stringify(event));
-
-
+		broadcast({"type": "mediaManager.onLoad"});
+		console.log('### Media Manager - LOAD: ', event.data);
 		if (!playerInitialized) {
-
-
-			var playerLib = embedInfo["lib"] + "mwEmbedLoader.php";
-			var s = document.createElement("script");
-			s.type = "text/javascript";
-			s.src = playerLib;
-			document.head.appendChild(s);
-
-			var intervalID = setInterval(function () {
-				if (typeof mw !== "undefined") {
-					clearInterval(intervalID);
-					mw.setConfig("EmbedPlayer.HidePosterOnStart", true);
-					if (embedInfo['debugKalturaPlayer'] == true) {
-						mw.setConfig("debug", true);
-						mw.setConfig("debugTarget", "kdebug");
-						//mw.setConfig("debugFilter", "---");
-						mw.setConfig("autoScrollDebugTarget", true);
-						document.getElementById('kdebug').style.display = 'block';
-					}
-					mw.setConfig("chromecastReceiver", true);
-					mw.setConfig("Kaltura.ExcludedModules", "chromecast");
-
-					kWidget.embed({
-						"targetId": "kaltura_player",
-						"wid": "_" + embedInfo['publisherID'],
-						"uiconf_id": embedInfo['uiconfID'],
-						"readyCallback": function (playerId) {
-							if (!playerInitialized) {
-								playerInitialized = true;
-								kdp = document.getElementById(playerId);
-								$("#receiverVideoElement").remove();
-								mediaElement = $(kdp).contents().contents().find("video")[0];
-								mediaManager.setMediaElement(mediaElement);
-								messageBus.broadcast("mediaHostState: success");
-								setDebugMessage('mediaHostState', 'success');
-
-								kdp.kBind("broadcastToSender", function (msg) {
-									messageBus.broadcast(msg);
-									isInSequence = ( msg == "chromecastReceiverAdOpen" );
-								});
-							}
-						},
-						"flashvars": embedInfo['flashVars'],
-						"entry_id": embedInfo['entryID']
-					});
-				}
-			}, 100);
+			embedPlayer(embedInfo);
+		} else {
+			//If same entry is sent then reload, else perform changeMedia
+			if(kdp.evaluate('{mediaProxy.entry.id}') === embedInfo['entryID']){
+				kdp.sendNotification("doPlay");
+			} else {
+				kdp.sendNotification("changeMedia", {"entryId": embedInfo['entryID']});
+			}
 		}
-		//if (event.data['media'] && event.data['media']['contentId']) {
-		//	initPlayer(event);
-		//}
 	};
+}
+
+function embedPlayer(embedInfo){
+	var playerLib = embedInfo["lib"] + "mwEmbedLoader.php";
+	var s = document.createElement("script");
+	s.type = "text/javascript";
+	s.src = playerLib;
+	document.head.appendChild(s);
+	setState(State.LOADING, false);
+	var intervalID = setInterval(function () {
+		if (typeof mw !== "undefined") {
+			clearInterval(intervalID);
+			mw.setConfig("EmbedPlayer.HidePosterOnStart", true);
+			if (embedInfo['debugKalturaPlayer'] == true) {
+				mw.setConfig("debug", true);
+			}
+			mw.setConfig("chromecastReceiver", true);
+			mw.setConfig("Kaltura.ExcludedModules", "chromecast");
+			self.setState(State.LOADING, false);
+			//embedInfo['flashVars'].LeadWithHLSOnJs = true;
+			//embedInfo['flashVars'].dash = {plugin:true};
+			embedInfo['flashVars'].autoPlay = true;
+			kWidget.embed({
+				"targetId": "kaltura_player",
+				"wid": "_" + embedInfo['publisherID'],
+				"uiconf_id": embedInfo['uiconfID'],
+				"readyCallback": function (playerId) {
+					if (!playerInitialized) {
+						playerInitialized = true;
+						kdp = document.getElementById(playerId);
+						$("#receiverVideoElement").remove();
+						mediaElement = $(kdp).contents().contents().find("video")[0];
+						mediaManager.setMediaElement(mediaElement);
+						broadcast({"tyep": "mediaHostState: success"});
+
+
+						kdp.kBind("broadcastToSender", function (msg) {
+							var mediaInfo = mediaManager.getMediaInformation();
+							mediaInfo.duration = kdp.evaluate('{duration}');
+							mediaManager.setMediaInformation(mediaInfo);
+							broadcast(msg);
+						});
+						kdp.kBind("onPlay", function (msg) {
+							setState(State.PLAYING, false);
+						});
+					}
+				},
+				"flashvars": embedInfo['flashVars'],
+				"entry_id": embedInfo['entryID']
+			});
+		}
+	}, 100);
 }
 
 function initApp() {
 	console.log('### Application Loaded. Starting system.');
-	setDebugMessage('applicationState', 'Loaded. Starting up.');
+	castReceiverManager.start();
+}
 
-	/**
-	 * Application config
-	 **/
-	var appConfig = new cast.receiver.CastReceiverManager.Config();
+function setCastReceiverManagerEvents() {
+	castReceiverManager.onReady = function (event) {
+		console.log('### Cast Receiver Manager is READY: ' + JSON.stringify(event));
+		setState(State.IDLE, false);
+	};
 
-	/**
-	 * Text that represents the application status. It should meet
-	 * internationalization rules as may be displayed by the sender application.
-	 * @type {string|undefined}
-	 **/
-	appConfig.statusText = 'Ready to play';
-
-	/**
-	 * Maximum time in seconds before closing an idle
-	 * sender connection. Setting this value enables a heartbeat message to keep
-	 * the connection alive. Used to detect unresponsive senders faster than
-	 * typical TCP timeouts. The minimum value is 5 seconds, there is no upper
-	 * bound enforced but practically it's minutes before platform TCP timeouts
-	 * come into play. Default value is 10 seconds.
-	 * @type {number|undefined}
-	 * 10 minutes for testing, use default 10sec in prod by not setting this value
-	 **/
-	appConfig.maxInactivity = 600;
 	castReceiverManager.onShutdown = function(){
-		messageBus.broadcast("shutdown"); // receiver was shut down by the browser Chromecast icon - send message to the player to stop the app
-	}
-	/**
-	 * Initializes the system manager. The application should call this method when
-	 * it is ready to start receiving messages, typically after registering
-	 * to listen for the events it is interested on.
-	 */
-	castReceiverManager.start(appConfig);
+		broadcast({"type": "shutdown"}); // receiver was shut down by the browser Chromecast icon - send message to the player to stop the app
+	};
+
+	castReceiverManager.onSenderConnected = function (event) {
+		console.log('### Cast Receiver Manager - Sender Connected : ' +
+			JSON.stringify(event));
+		senders = castReceiverManager.getSenders();
+	};
+
+	castReceiverManager.onSenderDisconnected = function (event) {
+		console.log('### Cast Receiver Manager - Sender Disconnected : ' +
+			JSON.stringify(event));
+		senders = castReceiverManager.getSenders();
+		if ((senders.length === 0) &&
+			(event.reason == cast.receiver.system.DisconnectReason.REQUESTED_BY_SENDER)) {
+			castReceiverManager.stop();
+		}
+	};
+
+	castReceiverManager.onSystemVolumeChanged = function (event) {
+		console.log('### Cast Receiver Manager - System Volume Changed : ' +
+			JSON.stringify(event.data));
+
+		// See cast.receiver.media.Volume
+		console.log('### Volume: ' + event.data['level'] + ' is muted? ' +
+			event.data['muted']);
+	};
 }
 
 function setCaption(trackNumber) {
@@ -521,191 +579,8 @@ function nextCaption() {
 	}
 }
 
-function setCastReceiverManagerEvents() {
-	castReceiverManager.onReady = function (event) {
-		console.log('### Cast Receiver Manager is READY: ' + JSON.stringify(event));
-		setDebugMessage('castReceiverManagerMessage', 'READY: ' +
-			JSON.stringify(event));
-		setDebugMessage('applicationState', 'Loaded. Started. Ready.');
-	};
 
-	castReceiverManager.onSenderConnected = function (event) {
-		console.log('### Cast Receiver Manager - Sender Connected : ' +
-			JSON.stringify(event));
-		setDebugMessage('castReceiverManagerMessage', 'Sender Connected: ' +
-			JSON.stringify(event));
 
-		senders = castReceiverManager.getSenders();
-		setDebugMessage('senderCount', '' + senders.length);
-	};
-
-	castReceiverManager.onSenderDisconnected = function (event) {
-		console.log('### Cast Receiver Manager - Sender Disconnected : ' +
-			JSON.stringify(event));
-		setDebugMessage('castReceiverManagerMessage', 'Sender Disconnected: ' +
-			JSON.stringify(event));
-
-		senders = castReceiverManager.getSenders();
-		setDebugMessage('senderCount', '' + senders.length);
-		console.log('### Cast Receiver Manager - Sender Disconnected : ' + senders.length);
-		if(senders.length == 0 &&
-			event.reason == cast.receiver.system.DisconnectReason.REQUESTED_BY_SENDER) {
-			castReceiverManager.stop();
-		}
-	};
-
-	castReceiverManager.onSystemVolumeChanged = function (event) {
-		console.log('### Cast Receiver Manager - System Volume Changed : ' +
-			JSON.stringify(event));
-		setDebugMessage('castReceiverManagerMessage', 'System Volume Changed: ' +
-			JSON.stringify(event));
-
-		// See cast.receiver.media.Volume
-		console.log('### Volume: ' + event.data['level'] + ' is muted? ' +
-			event.data['muted']);
-		setDebugMessage('volumeMessage', 'Level: ' + event.data['level'] +
-			' -- muted? ' + event.data['muted']);
-	};
-}
-
-function setMediaElementEvents(mediaElement) {
-	mediaElement.addEventListener('loadstart', function (e) {
-		kdp.sendNotification("loadstart");
-		document.getElementById("kaltura_player").style.visibility = "visible";
-		console.log('######### MEDIA ELEMENT LOAD START');
-		setDebugMessage('mediaElementState', 'Load Start');
-		messageBus.broadcast("mediaElement: Load Start");
-
-	});
-	mediaElement.addEventListener('loadeddata', function (e) {
-		if (protocol === undefined || protocol === null){
-			return;
-		}
-		console.log('######### MEDIA ELEMENT DATA LOADED');
-		setDebugMessage('mediaElementState', 'Data Loaded');
-		messageBus.broadcast("mediaElement:Data Loaded");
-		var streamCount = protocol.getStreamCount();
-		var streamInfo;
-		var streamVideoCodecs;
-		var streamAudioCodecs;
-		var captions = {};
-		for (var c = 0; c < streamCount; c++) {
-			streamInfo = protocol.getStreamInfo(c);
-			if (streamInfo.mimeType.indexOf('text') === 0) {
-				captions[c] = streamInfo.language;
-			} else if (streamInfo.mimeType === 'video/mp4' ||
-				streamInfo.mimeType === 'video/mp2t') {
-				streamVideoCodecs = streamInfo.codecs;
-				streamVideoBitrates = streamInfo.bitrates;
-				if (maxBW) {
-					var videoLevel = protocol.getQualityLevel(c, maxBW);
-				}
-				else {
-					var videoLevel = protocol.getQualityLevel(c);
-				}
-				setDebugMessage('streamVideoQuality', streamInfo.bitrates[videoLevel]);
-				videoStreamIndex = c;
-				setDebugMessage('videoStreamIndex', videoStreamIndex);
-			} else if (streamInfo.mimeType === 'audio/mp4') {
-				audioStreamIndex = c;
-				setDebugMessage('audioStreamIndex', audioStreamIndex);
-				streamAudioCodecs = streamInfo.codecs;
-				streamAudioBitrates = streamInfo.bitrates;
-				var audioLevel = protocol.getQualityLevel(c);
-				setDebugMessage('streamAudioQuality', streamInfo.bitrates[audioLevel]);
-			}
-			else {
-			}
-		}
-		setDebugMessage('streamCount', streamCount);
-		setDebugMessage('streamVideoCodecs', streamVideoCodecs);
-		setDebugMessage('streamVideoBitrates', JSON.stringify(streamVideoBitrates));
-		setDebugMessage('streamAudioCodecs', streamAudioCodecs);
-		setDebugMessage('streamAudioBitrates', JSON.stringify(streamAudioBitrates));
-		setDebugMessage('captions', JSON.stringify(captions));
-
-		// send captions to senders
-		console.log(JSON.stringify(captions));
-		if (Object.keys(captions).length > 0) {
-			var caption_message = {};
-			caption_message['captions'] = captions;
-			//messageSender(senders[0], JSON.stringify(caption_message));
-			broadcast(JSON.stringify(caption_message));
-		}
-
-		// send video bitrates to senders
-		if (streamVideoBitrates && Object.keys(streamVideoBitrates).length > 0) {
-			var video_bitrates_message = {};
-			video_bitrates_message['video_bitrates'] = streamVideoBitrates;
-			broadcast(JSON.stringify(video_bitrates_message));
-		}
-
-		// send audio bitrates to senders
-		if (streamAudioBitrates && Object.keys(streamAudioBitrates).length > 0) {
-			var audio_bitrates_message = {};
-			audio_bitrates_message['audio_bitrates'] = streamAudioBitrates;
-			broadcast(JSON.stringify(audio_bitrates_message));
-		}
-
-		getPlayerState();
-
-	});
-	mediaElement.addEventListener('canplay', function (e) {
-		console.log('######### MEDIA ELEMENT CAN PLAY');
-		setDebugMessage('mediaElementState', 'Can Play');
-		getPlayerState();
-	});
-	mediaElement.addEventListener('ended', function (e) {
-		console.log('######### MEDIA ELEMENT ENDED');
-		setDebugMessage('mediaElementState', 'Ended');
-		getPlayerState();
-	});
-	mediaElement.addEventListener('playing', function (e) {
-		console.log('######### MEDIA ELEMENT PLAYING');
-		setDebugMessage('mediaElementState', 'Playing');
-	});
-	mediaElement.addEventListener('waiting', function (e) {
-		console.log('######### MEDIA ELEMENT WAITING');
-		setDebugMessage('mediaElementState', 'Waiting');
-		getPlayerState();
-	});
-	mediaElement.addEventListener('stalled', function (e) {
-		console.log('######### MEDIA ELEMENT STALLED');
-		setDebugMessage('mediaElementState', 'Stalled');
-		getPlayerState();
-	});
-	mediaElement.addEventListener('error', function (e) {
-		console.log('######### MEDIA ELEMENT ERROR ' + e);
-		setDebugMessage('mediaElementState', 'Error');
-		getPlayerState();
-	});
-	mediaElement.addEventListener('abort', function (e) {
-		console.log('######### MEDIA ELEMENT ABORT ' + e);
-		messageBus.broadcast("mediaElement: aborted");
-		setDebugMessage('mediaElementState', 'Abort');
-		getPlayerState();
-	});
-	mediaElement.addEventListener('susppend', function (e) {
-		console.log('######### MEDIA ELEMENT SUSPEND ' + e);
-		setDebugMessage('mediaElementState', 'Suspended');
-		getPlayerState();
-	});
-	mediaElement.addEventListener('progress', function (e) {
-		setDebugMessage('mediaElementState', 'Progress');
-		getPlayerState();
-	});
-
-	mediaElement.addEventListener('seeking', function (e) {
-		console.log('######### MEDIA ELEMENT SEEKING ' + e);
-		setDebugMessage('mediaElementState', 'Seeking');
-		getPlayerState();
-	});
-	mediaElement.addEventListener('seeked', function (e) {
-		console.log('######### MEDIA ELEMENT SEEKED ' + e);
-		setDebugMessage('mediaElementState', 'Seeked');
-		getPlayerState();
-	});
-}
 /*
  * send message to a sender via custom message channel
  @param {string} senderId A id string for specific sender
@@ -720,7 +595,8 @@ function messageSender(senderId, message) {
  @param {string} message A message string
  */
 function broadcast(message) {
-	messageBus.broadcast(message);
+	console.info("Broadcast message: ", message);
+	messageBus.broadcast(JSON.stringify(message));
 }
 
 /*
@@ -731,41 +607,4 @@ function setDebugMessage(elementId, message) {
 	if (debugMode){
 		document.getElementById(elementId).innerHTML = '' + JSON.stringify(message);
 	}
-}
-
-/*
- * get media player state
- */
-function getPlayerState() {
-	if (mediaPlayer){
-		var playerState = mediaPlayer.getState();
-		setDebugMessage('mediaPlayerState', 'underflow: ' + playerState['underflow']);
-	}
-}
-/*
- * get DOM element css properties
- */
-function getCss(dom){
-	var style;
-	var returns = {};
-	if(window.getComputedStyle){
-		var camelize = function(a,b){
-			return b.toUpperCase();
-		};
-		style = window.getComputedStyle(dom, null);
-		for(var i = 0, l = style.length; i < l; i++){
-			var prop = style[i];
-			var camel = prop.replace(/\-([a-z])/g, camelize);
-			var val = style.getPropertyValue(prop);
-			returns[camel] = val;
-		};
-		return returns;
-	};
-	if(style = dom.currentStyle){
-		for(var prop in style){
-			returns[prop] = style[prop];
-		};
-		return returns;
-	};
-	return this.css();
 }
