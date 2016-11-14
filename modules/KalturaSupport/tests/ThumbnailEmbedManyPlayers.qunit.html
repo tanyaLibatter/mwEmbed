@@ -119,7 +119,7 @@ if( window.QUnit ){
 		for( var i=0; i < numOfPlayer; i++){
 			// wrap in local closure to keep local ready callback 
 			( function( playerInx ){
-				var playerId = 'player_' + playerInx ;
+				var playerId = '_player' + playerInx ;
 				
 				// Add a trget div:
 				$( '#myVideoContainer' ).append( 

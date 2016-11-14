@@ -29,7 +29,7 @@
 	// clear the companions 
 	$.each( sizes, function(inx, size){
 		$('#players').append(
-			$('<div>').attr('id', 'player_' + size).css({
+			$('<div>').attr('id', '_player' + size).css({
 				'height': size + 'px',
 				'width': Math.round( size * 1.777777 ) + 'px'
 			}),
@@ -37,7 +37,7 @@
 		)
 		// embed the player: 
 		kWidget.embed( 
-			$.extend( true, {}, embedSettings, { 'targetId':  'player_' + size })
+			$.extend( true, {}, embedSettings, { 'targetId':  '_player' + size })
 		)
 	})
 </script>

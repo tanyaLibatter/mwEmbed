@@ -71,7 +71,7 @@ DAL for Q&A Module
         // If there are no answers on the thread - return first question (so thread won't jump on new question).
         this.lastTimeForSort = function(){
 
-            if (_this.entries()[0]().getType() === "Announcement"){
+            if (_this.entries()[0]()._getType() === "Announcement"){
                 return _this.entries()[0]().getTime();
             }
 
@@ -79,7 +79,7 @@ DAL for Q&A Module
             var a_time = undefined;
 
             for(var i =0; i < _this.entries().length; ++i) {
-                if (_this.entries()[i]().getType() === "Answer"){
+                if (_this.entries()[i]()._getType() === "Answer"){
                     if (a_time === undefined){
                         a_time = _this.entries()[i]().getTime();
                     }
@@ -87,7 +87,7 @@ DAL for Q&A Module
                         a_time = _this.entries()[i]().getTime();
                     }
                 }
-                else if (_this.entries()[i]().getType() === "Question"){
+                else if (_this.entries()[i]()._getType() === "Question"){
                     if (q_time === undefined){
                         q_time = _this.entries()[i]().getTime();
                     }
@@ -129,15 +129,15 @@ DAL for Q&A Module
         this.cuePoint= ko.observable(cuePoint);
         this.timestamp = ko.observable(this.cuePoint().createdAt);
 
-        this.getType = function(){
+        this._getType = function(){
             return this.cuePoint().metadata.Type;
         };
 
         this.isAnswer = function(){
-            return this.getType() === "Answer";
+            return this._getType() === "Answer";
         };
 
-        this.isRead = ko.observable(viewedEntries.isRead(_this.cuePoint().id) || _this.getType() === "Question");
+        this.isRead = ko.observable(viewedEntries.isRead(_this.cuePoint().id) || _this._getType() === "Question");
 
         this.setThread = function(thread){
             this._thread = thread;
@@ -164,13 +164,13 @@ DAL for Q&A Module
         };
 
         this.getTitle = function(){
-            if (this.getType() === "Announcement"){
+            if (this._getType() === "Announcement"){
                 return gM('qna-announcement-title');
             }
-            else if (this.getType() === "Question"){
+            else if (this._getType() === "Question"){
                 return gM('qna-you-asked');
             }
-            else if (this.getType() === "AnswerOnAir"){
+            else if (this._getType() === "AnswerOnAir"){
                 return gM('qna-answer-on-air');
             }
             else{
@@ -179,7 +179,7 @@ DAL for Q&A Module
         };
 
         this.getText = function(){
-            if (this.getType() === "AnswerOnAir"){
+            if (this._getType() === "AnswerOnAir"){
                 return '"' + this.cuePoint().text + '"';
             }
             return this.cuePoint().text;
@@ -623,7 +623,7 @@ DAL for Q&A Module
                                 if (_this.lastUpdateTime < cuePoint.updatedAt) {
                                     _this.lastUpdateTime = cuePoint.updatedAt;
                                 }
-                                if (item.getType() === "AnswerOnAir"){
+                                if (item._getType() === "AnswerOnAir"){
 
                                     _this.addOrUpdateAnswerOnAir(item);
                                     _this.AnswerOnAirQueueUpdate(_this.qnaPlugin.embedPlayer.currentTime);
