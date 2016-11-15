@@ -57,7 +57,10 @@ onload = function () {
 				document.getElementById('messages').style.display = 'block';
 			}
 			if (payload['target'] === 'logo') {
-				document.getElementById('logo').style.display = 'block';
+				// We want do display logo only for the first sender which connected
+				if ( senders.length === 1 ) {
+					document.getElementById( 'logo' ).style.display = 'block';
+				}
 			} else {
 				document.getElementById('receiverVideoElement').style.display = 'block';
 			}
