@@ -357,9 +357,9 @@
 				}
 			}
 		},
-		_onended: function () {
-			this.onClipDone();
-		},
+		//_onended: function () {
+		//	this.onClipDone();
+		//},
 		_onloadeddata: function(){
 			return;
 			if (this.protocol === undefined || this.protocol === null){
@@ -433,17 +433,23 @@
 			if (callback){
 				callback();
 			}
+			this.play();
 		},
 		// override these functions so embedPlayer won't try to sync time
 		syncCurrentTime: function(){
 			this.currentTime = this.getPlayerElementTime();
 		},
 
-		isInSequence: function(){return false;},
 		_ondurationchange: function (event, data) {
 			if ( this.playerElement && !isNaN(this.playerElement.duration) && isFinite(this.playerElement.duration) ) {
 				this.setDuration(this.getPlayerElement().duration);
 				return;
+			}
+		},
+
+		_onended: function(){
+			if (this._propagateEvents) {
+				this.onClipDone();
 			}
 		},
 

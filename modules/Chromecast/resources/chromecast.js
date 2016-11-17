@@ -61,6 +61,8 @@
 		supportedPlugins: ['doubleClick', 'youbora', 'kAnalony', 'related', 'comScoreStreamingTag', 'watermark', 'heartbeat'],
 		unSupportedPlugins: ['chromecast', 'playlistAPI'],
 		chromeLib: null,
+		disableDoubleclick: false,
+		restoreDoubleclick: false,
 
 		setup: function( embedPlayer ) {
 			var _this = this;
@@ -275,6 +277,9 @@
 			});
 
 			$( this.embedPlayer).bind('chromecastDeviceConnected', function(){
+				if (startTime && startTime > 0.01){
+					_this.disableDoubleclick = true;
+				}
 				_this.sessionListener();
 			});
 			$( this.embedPlayer).bind('chromecastDeviceDisConnected', function(){
@@ -310,6 +315,14 @@
 				//_this.sendMessage(changeMediaMsg);
 
 			});
+
+			//$( this.embedPlayer).bind('SourceSelected', function(e){
+			//	var licenseUrl = _this.buildUdrmLicenseUri("application/dash+xml");
+			//	if (licenseUrl) {
+			//		_this.sendMessage({'type': 'license', 'value': licenseUrl});
+			//		_this.log("set license URL to: " + licenseUrl);
+			//	}
+			//});
 
 			$( this.embedPlayer).bind('onAdSkip', function(e){
 				_this.sendMessage({'type': 'notification','event': 'cancelAllAds'});
@@ -357,6 +370,10 @@
 				//_this.sendMessage({'type': 'notification','event': e.type});
 				//if (_this.replay){
 				//	_this.loadMedia();
+				//}
+				//_this.sendMessage({'type': 'notification','event': e.type});
+				//if (_this.replay){
+				//	_this.loadMedia(null, null, true);
 				//}
 			});
 
@@ -606,23 +623,10 @@
 			}
 		},
 
-		getFlashVars: function() {
-			var _this = this;
-
-			var fv = {};
-			this.supportedPlugins.forEach( function ( plugin ) {
-				if ( !$.isEmptyObject( _this.embedPlayer.getKalturaConfig( plugin ) ) ) {
-					fv[plugin] = _this.embedPlayer.getKalturaConfig( plugin );
-				}
-			} );
-			this.unSupportedPlugins.forEach( function ( plugin ) {
-				if ( !$.isEmptyObject( _this.embedPlayer.getKalturaConfig( plugin ) ) ) {
-					fv[plugin] = {"plugin": false};
-				}
-			} );
-			// add support for custom proxyData for OTT app developers
+		getProxyData: function(){
 			var proxyData = this.getConfig( 'proxyData' );
 			if ( proxyData ) {
+				var _this = this;
 				var recursiveIteration = function ( object ) {
 					for ( var property in object ) {
 						if ( object.hasOwnProperty( property ) ) {
@@ -633,14 +637,39 @@
 							}
 						}
 					}
-				}
+				};
 				recursiveIteration( proxyData );
-				fv['proxyData'] = proxyData;
+				return proxyData;
 			} else {
-				var data  = _this.embedPlayer.getKalturaConfig('originalProxyData');
-				if (!$.isEmptyObject(data)) {
-					fv['proxyData'] = data;
+				var proxyData  = this.embedPlayer.getKalturaConfig('originalProxyData');
+				if (!$.isEmptyObject(proxyData)) {
+					if(proxyData.data){
+						return proxyData.data;
+					} else {
+						return proxyData;
+					}
 				}
+			}
+		},
+
+		getFlashVars: function() {
+			var _this = this;
+
+			var fv = {};
+			this.supportedPlugins.forEach( function ( plugin ) {
+				if ( !$.isEmptyObject( _this.embedPlayer.getRawKalturaConfig( plugin ) ) ) {
+					fv[plugin] = _this.embedPlayer.getRawKalturaConfig( plugin );
+				}
+			} );
+			this.unSupportedPlugins.forEach( function ( plugin ) {
+				if ( !$.isEmptyObject( _this.embedPlayer.getKalturaConfig( plugin ) ) ) {
+					fv[plugin] = {"plugin": false};
+				}
+			} );
+			// add support for custom proxyData for OTT app developers
+			var proxyData = this.getProxyData();
+			if(proxyData){
+				fv['proxyData'] = proxyData;
 			}
 
 			// add support for passing ks
@@ -657,6 +686,11 @@
 			}
 			//Always enable embedPlayerChromecastReceiver
 			fv["embedPlayerChromecastReceiver"] = {"plugin": true};
+			if (this.disableDoubleclick && typeof fv['doubleClick'] !== "undefined"){
+				fv['doubleClick']['plugin'] = false;
+				this.restoreDoubleclick = true;
+			}
+			fv.autoPlay = true;
 			return fv;
 		},
 

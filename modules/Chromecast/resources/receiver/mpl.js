@@ -404,6 +404,15 @@ function setMediaManagerEvents() {
 		var embedInfo = event.data.media.customData;
 		broadcast({"type": "mediaManager.onLoad"});
 		console.log('### Media Manager - LOAD: ', event.data);
+
+		logoElement.style.display = 'block';
+		logoElement.style.opacity = 1;
+		//if (mediaPlayer) {
+		//	mediaElement.pause();
+		//	mediaPlayer.unload();
+		//	mediaPlayer = null;
+		//}
+
 		if (!playerInitialized) {
 			embedPlayer(embedInfo);
 		} else {
